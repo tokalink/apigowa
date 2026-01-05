@@ -487,14 +487,17 @@ func (s *Service) PairPhone(token, phone string) (string, error) {
 		}
 	}
 
-	// Wait for connection to be ready before requesting code?
-	// Usually PairPhone handles it or needs connection.
+	// Wait for connection to be ready before requesting code
+	time.Sleep(1 * time.Second)
 
-	// Type of pairing: 2 = Phone number pairing
-	browserName := os.Getenv("WHATSAPP_BROWSER")
+	// Type of pairing: Phone number pairing
+	browserName := os.Getenv("DEVICE_NAME")
 	if browserName == "" {
-		browserName = "Google Chrome"
+		browserName = "Chrome"
 	}
+
+	fmt.Printf("[PairPhone] Phone: %s, Browser: %s\n", phone, browserName)
+
 	code, err := client.PairPhone(context.Background(), phone, true, whatsmeow.PairClientChrome, browserName)
 	if err != nil {
 		return "", err

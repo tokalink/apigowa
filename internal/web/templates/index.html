@@ -1128,10 +1128,9 @@
                     badge.innerText = 'Disconnected';
                     badge.classList.add('disconnected');
 
-                    // Auto generate QR if not connected? Or wait for user?
-                    // Let's wait for user to click "Generate" or we can auto-call it.
-                    // Previous logic auto-called it.
-                    generateQR();
+                    // Tampilkan status awal - user harus klik Generate QR atau Pairing Code
+                    const cont = document.getElementById('qr-container');
+                    cont.innerHTML = '<span style="color:var(--text-secondary);">Klik "Generate QR Code" atau masukkan nomor untuk "Get Pairing Code"</span>';
                 }
             } catch (e) { console.error(e); }
         }

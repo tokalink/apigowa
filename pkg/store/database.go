@@ -62,14 +62,10 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, err
 	}
 
-	// Migration for existing tables (ignore errors if columns exist)
+	// Migration for existing tables (ignore errors if columns already exist)
 	_, _ = rawDB.Exec("ALTER TABLE account_tokens ADD COLUMN push_name TEXT;")
 	_, _ = rawDB.Exec("ALTER TABLE account_tokens ADD COLUMN webhook_url TEXT;")
-	if _, err := rawDB.Exec("ALTER TABLE account_tokens ADD COLUMN workspace TEXT;"); err != nil {
-		fmt.Printf("[Database] Migration workspace: %v\n", err)
-	} else {
-		fmt.Println("[Database] Migration workspace: success")
-	}
+	_, _ = rawDB.Exec("ALTER TABLE account_tokens ADD COLUMN workspace TEXT;")
 
 	return &Store{
 		Container:  container,

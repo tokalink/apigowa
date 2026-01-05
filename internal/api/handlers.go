@@ -4,6 +4,7 @@ import (
 	"apiwago/internal/whatsapp"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -237,12 +238,16 @@ func (s *Server) PairPhoneHandler(c *gin.Context) {
 		return
 	}
 
+	fmt.Printf("[PairPhone] Token: %s, Phone: %s\n", req.Token, req.Phone)
+
 	code, err := s.Service.PairPhone(string(req.Token), req.Phone)
 	if err != nil {
+		fmt.Printf("[PairPhone] Error: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	fmt.Printf("[PairPhone] Success, Code: %s\n", code)
 	c.JSON(http.StatusOK, gin.H{"code": code})
 }
 
