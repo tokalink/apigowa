@@ -1,0 +1,1286 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ApiWago - WhatsApp Multi-Device</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #128c7e;
+            --primary-dark: #075e54;
+            --secondary: #25D366;
+            --danger: #d32f2f;
+            --light: #f0f2f5;
+            --white: #ffffff;
+            --gray: #888888;
+            --border: #e0e0e0;
+            --shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--light);
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+
+        h2,
+        h3 {
+            color: var(--primary-dark);
+            margin-top: 0;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            min-height: calc(100vh - 40px);
+        }
+
+        /* Views */
+        #dashboard-view,
+        #detail-view {
+            width: 100%;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--white);
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+            padding: 20px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+
+        /* Detail Grid */
+        .grid-detail {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .grid-detail {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Status Badge */
+        .status-badge {
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: 12px;
+            background: #eee;
+            color: #555;
+            display: inline-block;
+        }
+
+        .status-badge.connected {
+            background: #dcf8c6;
+            color: var(--primary-dark);
+        }
+
+        .status-badge.disconnected {
+            background: #ffebee;
+            color: var(--danger);
+        }
+
+        /* Forms & Inputs */
+        label {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 6px;
+            display: block;
+            color: #555;
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-sizing: border-box;
+            font-family: inherit;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(18, 140, 126, 0.1);
+        }
+
+        button {
+            background-color: var(--primary);
+            color: white;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background-color: var(--primary-dark);
+        }
+
+        button.danger {
+            background-color: var(--danger);
+        }
+
+        button.danger:hover {
+            background-color: #b71c1c;
+        }
+
+        button.secondary {
+            background-color: #fff;
+            color: #555;
+            border: 1px solid var(--border);
+        }
+
+        button.secondary:hover {
+            background-color: #f9f9f9;
+        }
+
+        button.sm {
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 15px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            padding: 5px 10px;
+            cursor: pointer;
+            color: var(--gray);
+            font-weight: 500;
+            position: relative;
+        }
+
+        .tab:hover {
+            color: var(--primary);
+        }
+
+        .tab.active {
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -11px;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--primary);
+        }
+
+        /* Tables & Lists */
+        .list-container {
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            background: #f9fafb;
+            font-weight: 600;
+            text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+            color: #555;
+        }
+
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #f0f0f0;
+            vertical-align: middle;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .list-item {
+            padding: 15px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .list-item:hover {
+            background-color: #fafafa;
+        }
+
+        /* Utils */
+        .hidden {
+            display: none !important;
+        }
+
+        .flex {
+            display: flex;
+        }
+
+        .items-center {
+            align-items: center;
+        }
+
+        .justify-between {
+            justify-content: space-between;
+        }
+
+        .gap-2 {
+            gap: 8px;
+        }
+
+        .gap-4 {
+            gap: 16px;
+        }
+
+        .w-full {
+            width: 100%;
+        }
+
+        .mt-4 {
+            margin-top: 16px;
+        }
+
+        .mb-2 {
+            margin-bottom: 8px;
+        }
+
+        .mb-4 {
+            margin-bottom: 16px;
+        }
+
+        .p-4 {
+            padding: 16px;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        /* Docs */
+        .code-block {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: monospace;
+            overflow-x: auto;
+            margin: 10px 0 20px 0;
+            white-space: pre;
+        }
+
+        .method {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 12px;
+            margin-right: 8px;
+        }
+
+        .post {
+            background: #49cc90;
+            color: white;
+        }
+
+        .get {
+            background: #61affe;
+            color: white;
+        }
+
+        .delete {
+            background: #f93e3e;
+            color: white;
+        }
+
+        /* Detail Specifics */
+        .profile-pic {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid var(--primary);
+            margin-right: 15px;
+        }
+
+        #qr-container img {
+            max-width: 100%;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .separator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 20px 0;
+            color: var(--gray);
+            font-size: 12px;
+        }
+
+        .separator::before,
+        .separator::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+        }
+
+        /* Auth */
+        .auth-wrapper {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .auth-box {
+            width: 100%;
+            max-width: 400px;
+        }
+
+        /* Mobile Responsiveness */
+        @media (max-width: 600px) {
+            .header-flex {
+                flex-direction: column;
+                align-items: flex-start !important;
+                gap: 15px;
+            }
+
+            .header-buttons {
+                width: 100%;
+                justify-content: space-between;
+                flex-wrap: wrap;
+            }
+
+            .header-buttons button {
+                flex: 1;
+                margin-bottom: 5px;
+            }
+
+            .controls-flex {
+                flex-direction: column;
+                align-items: stretch !important;
+                gap: 15px !important;
+            }
+
+            .workspace-select,
+            .search-box {
+                flex: 1 1 100% !important;
+                width: 100% !important;
+            }
+
+            .refresh-btn-container {
+                margin: 0 !important;
+                width: 100%;
+            }
+
+            .refresh-btn-container button {
+                width: 100%;
+            }
+
+            .new-token-flex {
+                flex-direction: column;
+                align-items: stretch !important;
+            }
+
+            .new-token-flex>div {
+                flex: 1 1 100% !important;
+                width: 100%;
+                margin-bottom: 10px;
+            }
+
+            .new-token-flex button {
+                width: 100%;
+            }
+
+            .list-container {
+                overflow-x: auto;
+            }
+
+            /* Adjust table cell padding for small screens */
+            th,
+            td {
+                padding: 10px 8px;
+                font-size: 13px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Auth Screen -->
+    <div id="auth-app" class="auth-wrapper hidden">
+        <div class="card auth-box">
+            <h2 id="auth-title" class="text-center mb-4">Welcome</h2>
+            <div id="auth-error"
+                style="background:#ffebee; color:#c62828; padding:10px; border-radius:8px; margin-bottom:15px; font-size:14px; display:none;">
+            </div>
+            <div>
+                <label>Username</label>
+                <input type="text" id="auth-user" placeholder="Enter username">
+                <label>Password</label>
+                <input type="password" id="auth-pass" placeholder="Enter password">
+                <button id="auth-btn" class="w-full" onclick="performAuth()">Login</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="main-app" class="container hidden">
+
+        <!-- DASHBOARD VIEW -->
+        <div id="dashboard-view">
+            <!-- Top Bar -->
+            <div class="card">
+                <div class="flex justify-between items-center mb-4 header-flex">
+                    <h2 style="margin:0">Dashboard</h2>
+                    <div class="flex gap-2 header-buttons">
+                        <button class="secondary" onclick="showDocs()">Documentation</button>
+                        <button class="secondary" onclick="logoutAdmin()"
+                            style="border-color:var(--danger); color:var(--danger);">Logout</button>
+                        <button onclick="toggleNewTokenForm()">+ New Device</button>
+                    </div>
+                </div>
+
+                <div class="flex gap-4 items-center controls-flex" style="flex-wrap: wrap;">
+                    <div class="workspace-select" style="flex: 0 0 250px;">
+                        <label style="margin-bottom:2px; font-size:12px;">Workspace</label>
+                        <select id="workspace-select" onchange="onWorkspaceChange()" style="margin-bottom:0;">
+                            <option value="">All Workspaces</option>
+                        </select>
+                    </div>
+                    <div class="search-box" style="flex: 1;">
+                        <label style="margin-bottom:2px; font-size:12px;">Search</label>
+                        <input type="text" placeholder="Search tokens..." oninput="onSearchDevices(this.value)"
+                            style="margin-bottom:0;">
+                    </div>
+                    <div class="refresh-btn-container" style="margin-top: 20px;">
+                        <button class="secondary" onclick="loadDevices()">Refresh</button>
+                    </div>
+                </div>
+
+                <!-- Hidden Create Form -->
+                <div id="new-token-form" class="hidden mt-4 p-4"
+                    style="background: #f8fafc; border-radius: 8px; border: 1px solid var(--border);">
+                    <h4 style="margin-top:0; margin-bottom:10px;">Create New Device Token</h4>
+                    <div class="flex gap-2 items-end new-token-flex">
+                        <div style="flex: 0 0 30%;">
+                            <label>Workspace</label>
+                            <input type="text" id="new-workspace-input" placeholder="e.g. Sales" style="margin:0;">
+                        </div>
+                        <div style="flex: 1;">
+                            <label>Token Name</label>
+                            <input type="text" id="new-token-input" placeholder="Unique Token Name" style="margin:0;">
+                        </div>
+                        <button onclick="createNewToken()">Create & Open</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Device List -->
+            <div class="card">
+                <div class="list-container" id="device-list-container">
+                    <div id="device-list"></div>
+                </div>
+                <div id="device-controls" class="flex items-center justify-between mt-4"
+                    style="color:var(--gray); font-size:14px;"></div>
+            </div>
+        </div>
+
+        <!-- DETAIL VIEW -->
+        <div id="detail-view" class="hidden">
+            <!-- Header -->
+            <div class="flex items-center gap-4 mb-4">
+                <button class="secondary sm" onclick="backToDashboard()">← Back to Dashboard</button>
+                <div style="border-left: 1px solid var(--border); height: 24px;"></div>
+                <h2 style="margin:0" id="detail-token-name">Token Name</h2>
+                <div id="detail-status-badge" class="status-badge">Checking...</div>
+            </div>
+
+            <div class="grid-detail">
+                <!-- Left: Manager -->
+                <div class="card">
+                    <h3 class="mb-4">Connection Manager</h3>
+
+                    <!-- Status Panel (Connected) -->
+                    <div id="status-panel" class="hidden">
+                        <div class="flex items-center mb-4">
+                            <div id="profile-container"></div>
+                            <div style="overflow:hidden;">
+                                <div id="status-name" style="font-weight:600; font-size:16px;"></div>
+                                <div id="status-jid" style="font-size:13px; color:var(--gray);"></div>
+                                <div id="status-phone" style="font-size:13px; color:var(--gray);"></div>
+                            </div>
+                        </div>
+                        <div class="flex gap-2">
+                            <button class="secondary w-full" onclick="reconnect()">Reconnect</button>
+                            <button class="danger w-full" onclick="logout()">Logout</button>
+                        </div>
+                    </div>
+
+                    <!-- Connection Workflow (Disconnected) -->
+                    <div id="connection-workflow" class="hidden">
+                        <div class="text-center mb-4">
+                            <div id="qr-container"
+                                style="min-height: 200px; display:flex; align-items:center; justify-content:center; background:#f9f9f9; border-radius:8px;">
+                                <span style="color:var(--gray);">Waiting for generation...</span>
+                            </div>
+                            <button onclick="generateQR()" class="w-full mt-2">Generate QR Code</button>
+                        </div>
+
+                        <div class="separator">OR PAIR WITH PHONE</div>
+
+                        <label>Phone Number</label>
+                        <input type="text" id="pair-phone" placeholder="e.g. 628123...">
+                        <button class="secondary w-full" onclick="pairPhone()">Get Pairing Code</button>
+                        <div id="pair-code" class="text-center mt-4"
+                            style="font-size: 24px; font-weight: 700; color: var(--primary); letter-spacing: 2px; min-height: 36px;">
+                        </div>
+
+                        <div class="mt-4 pt-4" style="border-top: 1px solid var(--border);">
+                            <button class="danger sm w-full" style="opacity:0.8;" onclick="deleteAndBack()">Delete
+                                Token</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Features -->
+                <div class="card">
+                    <div class="tabs">
+                        <div class="tab active" onclick="switchTab('send')">Send Message</div>
+                        <div class="tab" onclick="switchTab('contacts')">Contacts</div>
+                        <div class="tab" onclick="switchTab('groups')">Groups</div>
+                    </div>
+
+                    <!-- Send Tab -->
+                    <div id="tab-send">
+                        <label>Recipient (Phone / JID)</label>
+                        <input type="text" id="to" placeholder="e.g. 628123456789">
+                        <label>Message</label>
+                        <textarea id="message" rows="6" placeholder="Type your message here..."></textarea>
+
+                        <div class="flex justify-between items-center">
+                            <button onclick="sendMessage()" style="min-width: 120px;">Send Message</button>
+                            <div id="send-status"></div>
+                        </div>
+                    </div>
+
+                    <!-- Contacts Tab -->
+                    <div id="tab-contacts" class="hidden">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3>Contacts</h3>
+                            <button class="secondary sm" onclick="loadContacts()">Refresh List</button>
+                        </div>
+                        <div class="list-container" style="height: 500px;">
+                            <div id="contact-list"></div>
+                        </div>
+                    </div>
+
+                    <!-- Groups Tab -->
+                    <div id="tab-groups" class="hidden">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3>Groups</h3>
+                            <button class="secondary sm" onclick="loadGroups()">Refresh List</button>
+                        </div>
+                        <div class="list-container" style="height: 500px;">
+                            <div id="group-list"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DOCS VIEW -->
+        <div id="docs-view" class="hidden">
+            <div class="flex items-center gap-4 mb-4">
+                <button class="secondary sm" onclick="backToDashboard()">← Back to Dashboard</button>
+                <div style="border-left: 1px solid var(--border); height: 24px;"></div>
+                <h2 style="margin:0">API Documentation</h2>
+            </div>
+
+            <div class="card">
+                <h3>Authentication</h3>
+                <p>Include your API Key in the header for all protected requests.</p>
+                <div class="code-block">
+                    Header:
+                    apikey: YOUR_API_KEY
+                </div>
+
+                <h3>1. Start Session</h3>
+                <div><span class="method post">POST</span> /api/start</div>
+                <p>Initialize a session for a token. Must be called before generating QR.</p>
+                <div class="code-block">
+                    {
+                    "token": "my-token",
+                    "reject_call": "Y", // Optional: "Y" to reject calls
+                    "reject_message": "Busy" // Optional: message to send
+                    }
+                </div>
+
+                <h3>2. Get QR Code</h3>
+                <div><span class="method post">POST</span> /api/qrcode</div>
+                <p>Get QR code for login. Returns status info if already logged in.</p>
+                <div class="code-block">
+                    {
+                    "token": "my-token"
+                    }
+
+                    // Response (if not logged in):
+                    {
+                    "status": true,
+                    "qrcode": "data:image/png;base64,..."
+                    }
+
+                    // Response (if already logged in):
+                    {
+                    "status": true,
+                    "message": "AUTHENTICATED",
+                    "name": "User Name",
+                    "phone": "628123456789",
+                    ...
+                    }
+                </div>
+
+                <h3>3. Get Status</h3>
+                <div><span class="method get">GET</span> /api/status?token=my-token</div>
+                <p>Get connection status of a token.</p>
+                <div class="code-block">
+                    // Response:
+                    {
+                    "status": true/false,
+                    "message": "AUTHENTICATED" or "DISCONNECTED",
+                    "name": "User Name",
+                    "phone": "628123456789",
+                    "pic": "https://...",
+                    "data": { "id": "...", "lid": "", "name": "..." }
+                    }
+                </div>
+
+                <h3>4. Send Message</h3>
+                <div><span class="method post">POST</span> /api/send</div>
+                <p>Send a text or media message.</p>
+                <div class="code-block">
+                    {
+                    "token": "my-token",
+                    "phone": "628123456789",
+                    "message": "Hello World",
+                    "file_url": "https://example.com/image.jpg", // Optional
+                    "file_name": "image.jpg" // Optional
+                    }
+                </div>
+
+                <h3>5. Get Contacts</h3>
+                <div><span class="method get">GET</span> /api/contacts?token=my-token</div>
+                <p>Get all saved contacts.</p>
+
+                <h3>6. Get Groups</h3>
+                <div><span class="method get">GET</span> /api/groups?token=my-token</div>
+                <p>Get all joined groups.</p>
+
+                <h3>7. Logout</h3>
+                <div><span class="method post">POST</span> /api/logout?token=my-token</div>
+                <p>Logout and disconnect session.</p>
+
+                <h3>8. Reconnect</h3>
+                <div><span class="method post">POST</span> /api/reconnect?token=my-token</div>
+                <p>Reconnect an existing session.</p>
+
+                <h3>9. List Devices</h3>
+                <div><span class="method get">GET</span> /api/devices</div>
+                <p>Get a list of all devices. (Protected)</p>
+                <div class="code-block">
+                    Query Params:
+                    ?page=1
+                    ?limit=10
+                    ?q=search_term
+                    ?workspace=Marketing
+                </div>
+
+                <h3>10. Delete Device</h3>
+                <div><span class="method delete">DELETE</span> /api/device?token=my-token</div>
+                <p>Delete a device token. (Protected)</p>
+
+                <h3>11. Update Webhook</h3>
+                <div><span class="method post">POST</span> /api/webhook</div>
+                <p>Set webhook URL for a token. (Protected)</p>
+                <div class="code-block">
+                    {
+                    "token": "my-token",
+                    "url": "https://your-webhook.com/endpoint"
+                    }
+                </div>
+
+                <h3>12. Update Workspace</h3>
+                <div><span class="method post">POST</span> /api/workspace</div>
+                <p>Assign a workspace to a token. (Protected)</p>
+                <div class="code-block">
+                    {
+                    "token": "my-token",
+                    "workspace": "Marketing"
+                    }
+                </div>
+
+                <h3>13. Get Workspaces</h3>
+                <div><span class="method get">GET</span> /api/workspaces</div>
+                <p>Get list of all workspaces. (Protected)</p>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const API_KEY = "";
+        const API_BASE = '/api';
+        let currentToken = '';
+        let isSetupMode = false;
+
+        // --- AUTH ---
+        async function checkAuth() {
+            try {
+                const setupRes = await fetch(`${API_BASE}/check-setup`);
+                const setupData = await setupRes.json();
+
+                if (!setupData.is_setup) {
+                    showAuthScreen(true);
+                    return;
+                }
+
+                const devicesRes = await fetch(`${API_BASE}/devices`);
+                if (devicesRes.status === 401) {
+                    showAuthScreen(false);
+                } else if (devicesRes.ok) {
+                    showDashboard(); // Start at dashboard
+                    loadDevices();
+                    loadWorkspaces();
+                } else {
+                    showAuthScreen(false);
+                }
+            } catch (e) {
+                console.error("Auth check error", e);
+                showAuthScreen(false);
+            }
+        }
+
+        function showAuthScreen(isSetup) {
+            isSetupMode = isSetup;
+            document.getElementById('auth-app').classList.remove('hidden');
+            document.getElementById('main-app').classList.add('hidden');
+            document.getElementById('auth-title').innerText = isSetup ? "Initial Setup" : "Admin Login";
+            document.getElementById('auth-btn').innerText = isSetup ? "Create Admin Account" : "Sign In";
+        }
+
+        function showDashboard() {
+            document.getElementById('auth-app').classList.add('hidden');
+            document.getElementById('main-app').classList.remove('hidden');
+            document.getElementById('dashboard-view').classList.remove('hidden');
+            document.getElementById('detail-view').classList.add('hidden');
+            document.getElementById('docs-view').classList.add('hidden');
+            currentToken = ''; // Clear selection logic
+        }
+
+        function showDocs() {
+            document.getElementById('dashboard-view').classList.add('hidden');
+            document.getElementById('detail-view').classList.add('hidden');
+            document.getElementById('docs-view').classList.remove('hidden');
+        }
+
+        async function performAuth() {
+            const user = document.getElementById('auth-user').value;
+            const pass = document.getElementById('auth-pass').value;
+            const errorDiv = document.getElementById('auth-error');
+            errorDiv.style.display = 'none';
+
+            if (!user || !pass) {
+                errorDiv.innerText = "Please enter username and password";
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            const endpoint = isSetupMode ? `${API_BASE}/setup` : `${API_BASE}/login-admin`;
+
+            try {
+                const res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: user, password: pass })
+                });
+
+                const data = await res.json();
+                if (res.ok) {
+                    if (isSetupMode) {
+                        alert("Setup complete. Please login.");
+                        window.location.reload();
+                    } else {
+                        // Reload to verify cookie persistence and ensure clean state
+                        window.location.reload();
+                    }
+                } else {
+                    errorDiv.innerText = data.error || "Authentication failed";
+                    errorDiv.style.display = 'block';
+                }
+            } catch (e) {
+                errorDiv.innerText = "Network Error: " + e;
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        async function logoutAdmin() {
+            if (!confirm("Sign out of Admin Dashboard?")) return;
+            try {
+                await fetch(`${API_BASE}/logout-admin`, { method: 'POST' });
+                window.location.reload();
+            } catch (e) {
+                console.error(e);
+                window.location.reload();
+            }
+        }
+
+        // --- DASHBOARD LOGIC ---
+        function toggleNewTokenForm() {
+            const form = document.getElementById('new-token-form');
+            if (form.classList.contains('hidden')) {
+                form.classList.remove('hidden');
+            } else {
+                form.classList.add('hidden');
+            }
+        }
+
+        let currentPage = 1;
+        let currentLimit = 10;
+        let currentSearch = "";
+        let searchTimeout;
+
+        function onSearchDevices(val) {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                currentSearch = val;
+                currentPage = 1;
+                loadDevices();
+            }, 300);
+        }
+
+        async function loadWorkspaces() {
+            try {
+                const res = await fetch('/api/workspaces', { headers: { 'apikey': API_KEY } });
+                const data = await res.json();
+                const select = document.getElementById('workspace-select');
+                const current = select.value;
+                select.innerHTML = '<option value="">All Workspaces</option>';
+                (data.data || []).forEach(w => {
+                    const opt = document.createElement('option');
+                    opt.value = w;
+                    opt.innerText = w;
+                    select.appendChild(opt);
+                });
+                select.value = current;
+            } catch (e) { console.error(e); }
+        }
+
+        async function onWorkspaceChange() {
+            loadDevices();
+        }
+
+        async function loadDevices(page = 1) {
+            currentPage = page;
+            const search = currentSearch;
+            const valEl = document.getElementById('workspace-select');
+            const workspace = valEl ? valEl.value : '';
+
+            try {
+                const res = await fetch(`/api/devices?page=${page}&limit=${currentLimit}&q=${encodeURIComponent(search)}&workspace=${encodeURIComponent(workspace)}`, {
+                    headers: { 'apikey': API_KEY }
+                });
+
+                if (!res.ok) {
+                    if (res.status === 401) showAuthScreen(false);
+                    return;
+                }
+
+                const data = await res.json();
+                const devices = data.data || [];
+                const list = document.getElementById('device-list');
+
+                let tableHtml = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Token</th>
+                            <th>Identity</th>
+                            <th>Workspace</th>
+                            <th>Status</th>
+                            <th>Webhook</th>
+                            <th style="text-align:right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                `;
+
+                if (devices.length === 0) {
+                    tableHtml += `<tr><td colspan="6" class="text-center p-4">No devices found.</td></tr>`;
+                } else {
+                    devices.forEach(d => {
+                        tableHtml += `
+                        <tr>
+                            <td><strong>${d.token}</strong></td>
+                            <td>
+                                <div style="font-weight:600;">${d.name || '-'}</div>
+                                <div style="font-size:12px; color:#888;">${d.jid ? d.jid.split('@')[0].split(':')[0] : ''}</div>
+                            </td>
+                            <td>${d.workspace ? '<span class="status-badge">' + d.workspace + '</span>' : '-'}</td>
+                            <td>${d.jid ? '<span style="color:green">✔ Connected</span>' : '<span style="color:red">✖ Disconnected</span>'}</td>
+                            <td>
+                                <div class="flex gap-2">
+                                    <input type="text" value="${d.webhook || ''}" id="webhook-${d.token}" placeholder="URL" style="margin:0; width:200px; padding:6px;">
+                                    <button class="primary sm" onclick="saveWebhook('${d.token}')">Save</button>
+                                </div>
+                            </td>
+                            <td style="text-align:right;">
+                                <div class="flex gap-2 justify-end">
+                                    <button class="primary sm" onclick="openDevice('${d.token}')">Open</button>
+                                    <button class="danger sm" onclick="deleteDevice('${d.token}')">Delete</button>
+                                </div>
+                            </td>
+                        </tr>
+                        `;
+                    });
+                }
+                tableHtml += `</tbody></table>`;
+                list.innerHTML = tableHtml;
+
+                // Pagination
+                const controls = document.getElementById('device-controls');
+                const totalPages = Math.ceil(data.total / currentLimit) || 1;
+                controls.innerHTML = `
+                    <span>Total: ${data.total}</span>
+                    <div class="flex gap-2">
+                        <button class="secondary sm" onclick="changePage(-1)" ${currentPage <= 1 ? 'disabled' : ''}>Prev</button>
+                        <span class="flex items-center">Page ${currentPage} of ${totalPages}</span>
+                        <button class="secondary sm" onclick="changePage(1)" ${currentPage >= totalPages ? 'disabled' : ''}>Next</button>
+                    </div>
+                 `;
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function changePage(delta) { loadDevices(currentPage + delta); }
+
+        async function createNewToken() {
+            const nameInput = document.getElementById('new-token-input');
+            const name = nameInput.value.trim();
+            const wsInput = document.getElementById('new-workspace-input');
+            // Prefer input, fallback to filter select
+            const workspace = wsInput.value.trim() || document.getElementById('workspace-select').value;
+
+            if (!name) return alert("Enter token name");
+
+            // Save workspace if present
+            if (workspace) {
+                try {
+                    await fetch(`${API_BASE}/workspace`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'apikey': API_KEY },
+                        body: JSON.stringify({ token: name, workspace })
+                    });
+                } catch (e) { console.error(e); }
+            }
+
+            // Immediately open device to start auth flow
+            openDevice(name);
+
+            // Clear inputs
+            nameInput.value = '';
+            wsInput.value = '';
+
+            // Reload list in background so it's there when we come back
+            setTimeout(loadDevices, 1000);
+        }
+
+        async function deleteDevice(token) {
+            if (!confirm(`Delete '${token}'?`)) return;
+            await performDelete(token);
+        }
+
+        async function performDelete(token) {
+            try {
+                const res = await fetch(`${API_BASE}/device?token=${encodeURIComponent(token)}`, {
+                    method: 'DELETE',
+                    headers: { 'apikey': API_KEY }
+                });
+                if (res.ok) {
+                    loadDevices();
+                } else {
+                    const d = await res.json();
+                    alert("Failed: " + d.error);
+                }
+            } catch (e) { alert("Error: " + e); }
+        }
+
+        async function saveWebhook(token) {
+            const url = document.getElementById(`webhook-${token}`).value;
+            try {
+                const res = await fetch(`${API_BASE}/webhook`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token, url })
+                });
+                if (res.ok) alert('Webhook saved!');
+            } catch (e) { console.error(e); }
+        }
+
+        // --- DETAIL VIEW LOGIC ---
+        function openDevice(token) {
+            currentToken = token;
+            // Switch View
+            document.getElementById('dashboard-view').classList.add('hidden');
+            document.getElementById('detail-view').classList.remove('hidden');
+
+            // Update Header
+            document.getElementById('detail-token-name').innerText = token;
+
+            // Reset Detail Tabs
+            switchTab('send');
+
+            // Trigger Status Check & Auto Gen QR if new
+            checkStatus();
+        }
+
+        function backToDashboard() {
+            if (qrEventSource) qrEventSource.close();
+            showDashboard();
+            loadDevices();
+        }
+
+        async function deleteAndBack() {
+            if (confirm('Delete this token?')) {
+                await performDelete(currentToken);
+                backToDashboard();
+            }
+        }
+
+        // Status 
+        let qrEventSource;
+        async function checkStatus() {
+            if (!currentToken) return;
+            try {
+                document.getElementById('detail-status-badge').innerText = 'Checking...';
+                document.getElementById('detail-status-badge').className = 'status-badge';
+
+                const res = await fetch(`${API_BASE}/status?token=${currentToken}`);
+                const data = await res.json();
+
+                const connWorkflow = document.getElementById('connection-workflow');
+                const statusPanel = document.getElementById('status-panel');
+                const badge = document.getElementById('detail-status-badge');
+
+                if (data.status) {
+                    // Connected
+                    connWorkflow.classList.add('hidden');
+                    statusPanel.classList.remove('hidden');
+                    badge.innerText = 'Connected';
+                    badge.classList.add('connected');
+
+                    let picHtml = data.pic ? `<img src="${data.pic}" class="profile-pic">` : `<div class="profile-pic" style="background:#eee; display:flex; align-items:center; justify-content:center; font-size:24px;">👤</div>`;
+                    document.getElementById('profile-container').innerHTML = picHtml;
+
+                    document.getElementById('status-name').innerText = data.name || data.push_name || 'Unknown';
+                    const jid = data.data && data.data.id ? data.data.id : (data.jid || '-');
+                    document.getElementById('status-jid').innerText = jid;
+                    document.getElementById('status-phone').innerText = data.phone || '';
+
+                    if (qrEventSource) qrEventSource.close();
+
+                } else {
+                    // Disconnected
+                    connWorkflow.classList.remove('hidden');
+                    statusPanel.classList.add('hidden');
+                    badge.innerText = 'Disconnected';
+                    badge.classList.add('disconnected');
+
+                    // Auto generate QR if not connected? Or wait for user?
+                    // Let's wait for user to click "Generate" or we can auto-call it.
+                    // Previous logic auto-called it.
+                    generateQR();
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        async function generateQR() {
+            if (!currentToken) return;
+            if (qrEventSource) qrEventSource.close();
+
+            const cont = document.getElementById('qr-container');
+            cont.innerHTML = '<span style="color:var(--primary);">Loading QR...</span>';
+
+            qrEventSource = new EventSource(`${API_BASE}/login-sse?token=${currentToken}`);
+            qrEventSource.addEventListener('qr', (e) => {
+                cont.innerHTML = `<img src="data:image/png;base64,${e.data}">`;
+            });
+            qrEventSource.addEventListener('status', (e) => {
+                if (e.data === 'closed') {
+                    cont.innerHTML = '<div style="color:green; font-weight:bold;">Device Connected!</div>';
+                    qrEventSource.close();
+                    checkStatus();
+                }
+            });
+            qrEventSource.addEventListener('timeout', (e) => {
+                qrEventSource.close();
+                cont.innerHTML = `
+                    <div style="text-align:center; color:var(--danger);">
+                        <div style="font-weight:bold; margin-bottom:5px;">Session Expired</div>
+                        <div style="font-size:12px; margin-bottom:10px;">Please regenerate QR</div>
+                        <button class="sm secondary" onclick="generateQR()">Retry</button>
+                    </div>`;
+            });
+        }
+
+        async function pairPhone() {
+            const phone = document.getElementById('pair-phone').value;
+            if (!phone) return alert("Enter phone number");
+
+            try {
+                const res = await fetch(`${API_BASE}/pair`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: currentToken, phone })
+                });
+                const data = await res.json();
+                if (data.error) return alert(data.error);
+                document.getElementById('pair-code').innerText = data.code;
+
+                // Poll for status
+                setTimeout(checkStatus, 5000);
+            } catch (e) { alert(e); }
+        }
+
+        async function reconnect() {
+            await fetch(`${API_BASE}/reconnect?token=${currentToken}`, { method: 'POST' });
+            setTimeout(checkStatus, 2000);
+        }
+
+        async function logout() {
+            if (!confirm("Logout this session?")) return;
+            await fetch(`${API_BASE}/logout?token=${currentToken}`, { method: 'POST' });
+            checkStatus();
+        }
+
+        // --- FEATURES TABS ---
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('#detail-view div[id^="tab-"]').forEach(d => d.classList.add('hidden'));
+
+            // Activate
+            document.querySelectorAll('.tab').forEach(btn => {
+                if (btn.innerText.toLowerCase().includes(tab.replace('send', 'message'))) btn.classList.add('active');
+            });
+            document.getElementById('tab-' + tab).classList.remove('hidden');
+
+            if (tab === 'contacts') loadContacts();
+            if (tab === 'groups') loadGroups();
+        }
+
+        async function sendMessage() {
+            const to = document.getElementById('to').value;
+            const msg = document.getElementById('message').value;
+            const status = document.getElementById('send-status');
+
+            status.innerHTML = 'Sending...';
+            const res = await fetch(`${API_BASE}/send`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: currentToken, phone: to, message: msg })
+            });
+            const d = await res.json();
+
+            if (d.status) {
+                status.innerHTML = `<span style="color:var(--primary)">Sent! (ID: ${d.data.id})</span>`;
+            } else {
+                status.innerHTML = `<span style="color:var(--danger)">${d.message}</span>`;
+            }
+        }
+
+        async function loadContacts() {
+            if (!currentToken) return;
+            const res = await fetch(`${API_BASE}/contacts?token=${currentToken}`);
+            const data = await res.json();
+            const list = document.getElementById('contact-list');
+            list.innerHTML = '';
+            if (data && typeof data === 'object' && !Array.isArray(data)) {
+                Object.entries(data).forEach(([k, v]) => {
+                    const div = document.createElement('div');
+                    div.className = 'list-item';
+                    div.innerHTML = `
+                         <div class="item-info">
+                             <div class="item-title">${v.FullName || v.PushName || v.FirstName || 'Unknown'}</div>
+                             <div class="item-subtitle">${k}</div>
+                        </div>
+                        <button class="sm secondary" onclick="useContact('${k}')">Message</button>
+                    `;
+                    list.appendChild(div);
+                });
+            }
+        }
+
+        async function loadGroups() {
+            if (!currentToken) return;
+            const res = await fetch(`${API_BASE}/groups?token=${currentToken}`);
+            const data = await res.json();
+            const list = document.getElementById('group-list');
+            list.innerHTML = '';
+            data.forEach(g => {
+                const div = document.createElement('div');
+                div.className = 'list-item';
+                div.innerHTML = `
+                    <div class="item-info">
+                         <div class="item-title">${g.Name}</div>
+                         <div class="item-subtitle">${g.JID}</div>
+                    </div>
+                    <button class="sm secondary" onclick="useContact('${g.JID}')">Message</button>
+                `;
+                list.appendChild(div);
+            });
+        }
+
+        function useContact(jid) {
+            document.getElementById('to').value = jid;
+            switchTab('send');
+        }
+
+        // Init
+        window.onload = checkAuth;
+
+    </script>
+</body>
+
+</html>
