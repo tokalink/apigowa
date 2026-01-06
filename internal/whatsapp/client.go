@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -24,11 +25,13 @@ import (
 
 type Service struct {
 	mu               sync.RWMutex
-	Clients          map[string]*whatsmeow.Client
+	clientPool       *ClientPool
 	RejectionConfigs map[string]RejectionConfig
 	QRCodes          map[string]string
 	Store            *store.Store
 	WebhookURL       string
+	workerPool       *WorkerPool
+	httpClient       *HTTPClientPool
 }
 
 type RejectionConfig struct {
@@ -38,20 +41,38 @@ type RejectionConfig struct {
 }
 
 func NewService(s *store.Store, webhookURL string) *Service {
+	// Load pool configuration from environment
+	poolCfg := NewPoolConfigFromEnv()
+
 	return &Service{
 		Store:            s,
-		Clients:          make(map[string]*whatsmeow.Client),
+		clientPool:       NewClientPool(poolCfg),
 		RejectionConfigs: make(map[string]RejectionConfig),
 		QRCodes:          make(map[string]string),
 		WebhookURL:       webhookURL,
+		workerPool:       NewWorkerPool(poolCfg.WorkerPoolSize),
+		httpClient:       NewHTTPClientPool(poolCfg.HTTPPoolSize),
 	}
 }
 
+// Close cleans up resources
+func (s *Service) Close() {
+	s.clientPool.Stop()
+	s.workerPool.Stop()
+}
+
 func (s *Service) GetClient(token string) (*whatsmeow.Client, error) {
+	// Try to get from pool first
+	if client := s.clientPool.Get(token); client != nil {
+		return client, nil
+	}
+
+	// Not in pool, need to create
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if client, ok := s.Clients[token]; ok {
+	// Double-check after acquiring lock
+	if client := s.clientPool.Get(token); client != nil {
 		return client, nil
 	}
 
@@ -62,99 +83,121 @@ func (s *Service) GetClient(token string) (*whatsmeow.Client, error) {
 
 	// Create client
 	client := whatsmeow.NewClient(device, nil) // Logging nil for now
-	s.Clients[token] = client
 
 	// Add event handler
 	client.AddEventHandler(func(evt interface{}) {
-		// Handle internal events like PairSuccess
-		switch v := evt.(type) {
-		case *events.PairSuccess:
+		s.handleEvent(token, client, evt)
+	})
+
+	// Add to pool
+	s.clientPool.Put(token, client)
+
+	return client, nil
+}
+
+// handleEvent processes WhatsApp events using the worker pool
+func (s *Service) handleEvent(token string, client *whatsmeow.Client, evt interface{}) {
+	switch v := evt.(type) {
+	case *events.PairSuccess:
+		s.workerPool.Submit(func() {
 			fmt.Printf("Token %s paired successfully with JID %s\n", token, v.ID)
-			// Try to get push name if available, otherwise empty
 			pushName := ""
 			if client.Store.PushName != "" {
 				pushName = client.Store.PushName
 			}
 			s.Store.UpdateTokenJID(token, v.ID, pushName)
-		case *events.CallOffer:
+		})
+
+	case *events.CallOffer:
+		s.workerPool.Submit(func() {
 			s.handleCallRejection(token, v, client)
-		case *events.PushName:
-			// Update push name if it changes AND it matches our JID
+		})
+
+	case *events.PushName:
+		s.workerPool.Submit(func() {
 			if client.Store.ID != nil && v.JID.User == client.Store.ID.User {
 				if v.Message != nil && v.OldPushName != v.NewPushName {
 					s.Store.UpdateTokenJID(token, *client.Store.ID, v.NewPushName)
 				}
 			}
-		case *events.Connected:
-			// Saat terhubung, sinkronkan nama ke database
-			// Jalankan dalam goroutine dengan delay untuk menunggu PushName tersedia
-			go func() {
-				// Tunggu sebentar agar PushName tersedia
-				time.Sleep(2 * time.Second)
+		})
 
-				if client.Store.ID == nil {
-					return
-				}
+	case *events.Connected:
+		s.workerPool.Submit(func() {
+			s.handleConnected(token, client)
+		})
 
-				pushName := client.Store.PushName
-				phoneNumber := client.Store.ID.User
+	case *events.Message:
+		s.workerPool.Submit(func() {
+			s.handleMessage(token, client, v)
+		})
+	}
+}
 
-				// Jika PushName kosong, gunakan nomor sebagai fallback
-				if pushName == "" {
-					pushName = phoneNumber
-				}
+// handleConnected syncs name to database on connection
+func (s *Service) handleConnected(token string, client *whatsmeow.Client) {
+	// Wait briefly for PushName to be available
+	time.Sleep(2 * time.Second)
 
-				// Jika PushName sama dengan nomor telepon, cek dulu nama di database
-				if pushName == phoneNumber {
-					// Cek apakah sudah ada nama di database
-					dbInfo, err := s.Store.GetDeviceInfo(token)
-					if err == nil && dbInfo != nil && dbInfo.Name != "" && dbInfo.Name != phoneNumber {
-						// Gunakan nama dari database, jangan timpa dengan nomor telepon
-						fmt.Printf("Token %s: Connected - nama sudah ada di DB: %s, skip update\n", token, dbInfo.Name)
-						return
-					}
-				}
+	if client.Store.ID == nil {
+		return
+	}
 
-				// Update dengan PushName yang valid
-				s.Store.UpdateTokenJID(token, *client.Store.ID, pushName)
-				fmt.Printf("Token %s: Connected - nama disinkronkan ke database: %s\n", token, pushName)
-			}()
-		case *events.Message:
-			if v.Info.IsFromMe {
-				return
-			}
-			msgText := v.Message.GetConversation()
-			if msgText == "" {
-				msgText = v.Message.GetExtendedTextMessage().GetText()
-			}
+	pushName := client.Store.PushName
+	phoneNumber := client.Store.ID.User
 
-			if msgText == "!ping" {
-				s.SendMessage(token, v.Info.Chat.String(), "pong")
-			} else if msgText == "!id" {
-				workspace := "default" // Or fetch from store
-				// Get workspace from store
-				deviceInfo, err := s.Store.GetDeviceInfo(token)
-				if err == nil && deviceInfo.Workspace != "" {
-					workspace = deviceInfo.Workspace
-				}
+	if pushName == "" {
+		pushName = phoneNumber
+	}
 
-				reply := ""
-				if v.Info.IsGroup {
-					reply += fmt.Sprintf("Group ID : %s\n", v.Info.Chat.String())
-				}
-				reply += fmt.Sprintf("Your ID : %s\nMID : %s\nworkspace : %s\nid : %s",
-					v.Info.Sender.String(),
-					v.Info.ID,
-					workspace,
-					token,
-				)
-				s.SendMessage(token, v.Info.Chat.String(), reply)
-			}
+	// Don't overwrite existing name with phone number
+	if pushName == phoneNumber {
+		dbInfo, err := s.Store.GetDeviceInfo(token)
+		if err == nil && dbInfo != nil && dbInfo.Name != "" && dbInfo.Name != phoneNumber {
+			fmt.Printf("Token %s: Connected - nama sudah ada di DB: %s, skip update\n", token, dbInfo.Name)
+			return
+		}
+	}
+
+	s.Store.UpdateTokenJID(token, *client.Store.ID, pushName)
+	fmt.Printf("Token %s: Connected - nama disinkronkan ke database: %s\n", token, pushName)
+}
+
+// handleMessage processes incoming messages
+func (s *Service) handleMessage(token string, client *whatsmeow.Client, v *events.Message) {
+	if v.Info.IsFromMe {
+		return
+	}
+
+	msgText := v.Message.GetConversation()
+	if msgText == "" {
+		msgText = v.Message.GetExtendedTextMessage().GetText()
+	}
+
+	if msgText == "!ping" {
+		s.SendMessage(token, v.Info.Chat.String(), "pong")
+	} else if msgText == "!id" {
+		workspace := "default"
+		deviceInfo, err := s.Store.GetDeviceInfo(token)
+		if err == nil && deviceInfo.Workspace != "" {
+			workspace = deviceInfo.Workspace
 		}
 
-	})
+		reply := ""
+		if v.Info.IsGroup {
+			reply += fmt.Sprintf("Group ID : %s\n", v.Info.Chat.String())
+		}
+		reply += fmt.Sprintf("Your ID : %s\nMID : %s\nworkspace : %s\nid : %s",
+			v.Info.Sender.String(),
+			v.Info.ID,
+			workspace,
+			token,
+		)
+		s.SendMessage(token, v.Info.Chat.String(), reply)
+	}
 
-	return client, nil
+	// Handle webhook
+	s.handleWebhookEvent(token, v)
 }
 
 func (s *Service) consumeQR(token string, qrChan <-chan whatsmeow.QRChannelItem) {
@@ -166,7 +209,6 @@ func (s *Service) consumeQR(token string, qrChan <-chan whatsmeow.QRChannelItem)
 			fmt.Printf("Token %s: QR code diterima dan di-cache\n", token)
 		} else if evt.Event == "success" {
 			fmt.Printf("Token %s: Login berhasil!\n", token)
-			// Hapus QR dari cache karena sudah tidak diperlukan
 			s.mu.Lock()
 			delete(s.QRCodes, token)
 			s.mu.Unlock()
@@ -176,19 +218,14 @@ func (s *Service) consumeQR(token string, qrChan <-chan whatsmeow.QRChannelItem)
 		}
 	}
 
-	// Channel ditutup (timeout atau error)
-	// Bersihkan cache QR
+	// Channel closed
 	s.mu.Lock()
 	delete(s.QRCodes, token)
 	s.mu.Unlock()
 	fmt.Printf("Token %s: QR channel ditutup, cache dibersihkan\n", token)
 
-	// Disconnect session jika belum login (tidak terpakai)
-	s.mu.RLock()
-	client, ok := s.Clients[token]
-	s.mu.RUnlock()
-
-	if ok && client != nil && client.Store.ID == nil {
+	// Disconnect if not logged in
+	if client := s.clientPool.Get(token); client != nil && client.Store.ID == nil {
 		fmt.Printf("Token %s: Timeout 60 detik, session di-disconnect\n", token)
 		client.Disconnect()
 	}
@@ -204,18 +241,15 @@ func (s *Service) StartSession(token string, config RejectionConfig) error {
 		return err
 	}
 
-	// Force reconnect if stuck in connected but not logged in state
+	// Force reconnect if stuck
 	if client.IsConnected() && client.Store.ID == nil {
 		fmt.Printf("Token %s stuck (connected=true, loggedin=false). Force reconnecting...\n", token)
 		client.Disconnect()
 	}
 
 	if !client.IsConnected() {
-		// Ensure QR channel is initialized before connecting
-		// valid for 60s
 		qrChan, _ := client.GetQRChannel(context.Background())
 		go s.consumeQR(token, qrChan)
-
 		return client.Connect()
 	}
 	return nil
@@ -233,11 +267,10 @@ func (s *Service) handleCallRejection(token string, evt *events.CallOffer, clien
 	caller := evt.CallCreator.User
 	for _, excluded := range config.RejectExcludePhone {
 		if excluded == caller {
-			return // Excluded
+			return
 		}
 	}
 
-	// Reject Call
 	err := client.RejectCall(context.Background(), evt.CallCreator, evt.CallID)
 	if err != nil {
 		fmt.Printf("Failed to reject call from %s: %v\n", caller, err)
@@ -245,33 +278,27 @@ func (s *Service) handleCallRejection(token string, evt *events.CallOffer, clien
 		fmt.Printf("Rejected call from %s\n", caller)
 	}
 
-	// Send Message
 	if config.RejectMessage != "" {
 		s.SendMessage(token, evt.CallCreator.String(), config.RejectMessage)
 	}
 }
 
 func (s *Service) DeleteClient(token string) error {
+	// Remove from pool (this will disconnect)
+	s.clientPool.Remove(token)
+
+	// Clean up rejection config and QR
 	s.mu.Lock()
-	client, ok := s.Clients[token]
-	if ok {
-		if client.IsConnected() {
-			// Try to logout
-			_ = client.Logout(context.Background())
-		}
-		client.Disconnect()
-		delete(s.Clients, token)
-	}
+	delete(s.RejectionConfigs, token)
+	delete(s.QRCodes, token)
 	s.mu.Unlock()
 
 	return s.Store.DeleteDevice(token)
 }
 
 func (s *Service) handleWebhookEvent(token string, evt interface{}) {
-	// 1. Check for per-token webhook
 	webhookURL, err := s.Store.GetWebhook(token)
 	if err != nil || webhookURL == "" {
-		// Fallback to global webhook
 		webhookURL = s.WebhookURL
 	}
 
@@ -299,11 +326,11 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 			"chat":        v.Chat.String(),
 			"sender":      v.Sender.String(),
 			"timestamp":   v.Timestamp.Unix(),
-			"type":        v.Type, // Read, Delivered, etc.
+			"type":        v.Type,
 			"message_ids": v.MessageIDs,
 		}
 	default:
-		return // Ignore other events for now
+		return
 	}
 
 	payload := map[string]interface{}{
@@ -318,7 +345,8 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 		return
 	}
 
-	resp, err := http.Post(webhookURL, "application/json", bytes.NewBuffer(jsonBody))
+	// Use pooled HTTP client
+	resp, err := s.httpClient.Get().Post(webhookURL, "application/json", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		fmt.Printf("Failed to send webhook to %s: %v\n", webhookURL, err)
 		return
@@ -326,7 +354,6 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 	defer resp.Body.Close()
 }
 
-// GetQR returns a QR code PNG bytes for the given token
 func (s *Service) Login(token string) ([]byte, error) {
 	client, err := s.GetClient(token)
 	if err != nil {
@@ -334,34 +361,27 @@ func (s *Service) Login(token string) ([]byte, error) {
 	}
 
 	if client.Store.ID != nil {
-		// Already logged in
 		return nil, fmt.Errorf("already logged in as %s", client.Store.ID)
 	}
 
-	// Cek cache QR
 	s.mu.RLock()
 	code, ok := s.QRCodes[token]
 	s.mu.RUnlock()
 
 	if ok && code != "" {
-		// Generate PNG dari kode QR yang di-cache
 		png, err := qrcode.Encode(code, qrcode.Medium, 256)
 		return png, err
 	}
 
-	// Jika tidak ada kode di cache, cek status koneksi
 	if client.IsConnected() {
 		return nil, fmt.Errorf("waiting_for_qr")
 	}
 
-	// Jika tidak terhubung dan tidak ada kode, mungkin StartSession belum dipanggil
 	return nil, fmt.Errorf("not_connected")
 }
 
 var ErrQRTimeout = fmt.Errorf("qr_timeout")
 
-// LoginStream streams QR codes to the provided channel until timeout or explicit context cancellation.
-// It enforces a 60s timeout for the session if not logged in.
 func (s *Service) LoginStream(ctx context.Context, token string, qrStream chan<- string) error {
 	client, err := s.GetClient(token)
 	if err != nil {
@@ -372,45 +392,31 @@ func (s *Service) LoginStream(ctx context.Context, token string, qrStream chan<-
 		return fmt.Errorf("already_logged_in")
 	}
 
-	// Ensure session is started and consumer is running
-	// Call StartSession if:
-	// 1. Not connected at all, OR
-	// 2. Connected but not logged in (stuck state that needs reconnect)
 	if !client.IsConnected() || (client.IsConnected() && client.Store.ID == nil) {
-		// Use empty rejection config as default for auto-start
-		// In a real app we might want to fetch existing config
 		err := s.StartSession(token, RejectionConfig{})
 		if err != nil {
 			return err
 		}
 	}
 
-	// 60 Second Session Timeout
 	timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	var lastCode string
-
-	// Poll for QR updates
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			// Check if logged in (success)
 			if client.Store.ID != nil {
 				return nil
 			}
 
-			// Check if disconnected unexpectedly (maybe restart?)
 			if !client.IsConnected() {
-				// Try to restart? or fail?
-				// Let's fail so frontend retries
 				return fmt.Errorf("disconnected")
 			}
 
-			// Read Cache
 			s.mu.RLock()
 			code, ok := s.QRCodes[token]
 			s.mu.RUnlock()
@@ -429,6 +435,31 @@ func (s *Service) LoginStream(ctx context.Context, token string, qrStream chan<-
 
 var ErrUserNotRegistered = fmt.Errorf("user not registered on WhatsApp")
 
+// NormalizePhone normalizes phone number to WhatsApp format
+// - Removes special characters (-, spaces, parentheses, etc.)
+// - Converts 08xxx to 628xxx
+// - Removes + prefix
+func NormalizePhone(phone string) string {
+	// Remove all non-numeric characters except +
+	re := regexp.MustCompile(`[^0-9+]`)
+	phone = re.ReplaceAllString(phone, "")
+
+	// Remove + prefix
+	phone = strings.TrimPrefix(phone, "+")
+
+	// Convert 08 prefix to 628 (Indonesian format)
+	if strings.HasPrefix(phone, "08") {
+		phone = "62" + phone[1:]
+	}
+
+	// Handle case where someone put 0628 or similar
+	if strings.HasPrefix(phone, "0") {
+		phone = phone[1:]
+	}
+
+	return phone
+}
+
 func (s *Service) SendMessage(token, to, text string) (string, error) {
 	client, err := s.GetClient(token)
 	if err != nil {
@@ -439,16 +470,15 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 		return "", fmt.Errorf("client not logged in")
 	}
 
-	// Parse JID
+	// Normalize phone number if not already a JID
 	if !strings.Contains(to, "@") {
-		to = to + "@s.whatsapp.net"
+		to = NormalizePhone(to) + "@s.whatsapp.net"
 	}
 	recipient, err := types.ParseJID(to)
 	if err != nil {
 		return "", fmt.Errorf("invalid recipient JID: %w", err)
 	}
 
-	// Check if registered (skip for groups)
 	if recipient.Server != "g.us" {
 		isOnWhatsApp, err := client.IsOnWhatsApp(context.Background(), []string{recipient.User})
 		if err != nil {
@@ -470,7 +500,6 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 	return resp.ID, nil
 }
 
-// PairPhone initiates pairing via phone number and returns the code
 func (s *Service) PairPhone(token, phone string) (string, error) {
 	client, err := s.GetClient(token)
 	if err != nil {
@@ -487,10 +516,8 @@ func (s *Service) PairPhone(token, phone string) (string, error) {
 		}
 	}
 
-	// Wait for connection to be ready before requesting code
 	time.Sleep(1 * time.Second)
 
-	// Type of pairing: Phone number pairing
 	browserName := os.Getenv("DEVICE_NAME")
 	if browserName == "" {
 		browserName = "Chrome"
@@ -512,13 +539,10 @@ func (s *Service) GetContacts(token string) (map[types.JID]types.ContactInfo, er
 		return nil, err
 	}
 
-	// Check for nil contacts structure
 	if client.Store == nil || client.Store.Contacts == nil {
 		return nil, fmt.Errorf("contacts store not initialized")
 	}
 
-	// Ensure contacts are loaded? They are loaded on connect usually.
-	// But we can check store directly.
 	return client.Store.Contacts.GetAllContacts(context.Background())
 }
 
@@ -529,10 +553,9 @@ func (s *Service) GetGroups(token string) ([]*types.GroupInfo, error) {
 	}
 
 	if !client.IsConnected() {
-		// Try to connect logic or check if loaded
 		if client.Store.ID != nil {
 			client.Connect()
-			time.Sleep(1 * time.Second) // Wait brief moment
+			time.Sleep(1 * time.Second)
 		} else {
 			return nil, fmt.Errorf("client not logged in")
 		}
@@ -555,18 +578,13 @@ func (s *Service) GetStatus(token string) (*SessionStatus, error) {
 		return nil, err
 	}
 
-	// Attempt to connect if not connected, to ensure we have latest state?
-	// Or just check store.
 	if !client.IsConnected() {
 		if client.Store.ID != nil {
-			// If we have an ID, we are effectively "logged in" but disconnected.
-			// We can try to connect in background?
 			go client.Connect()
-			time.Sleep(500 * time.Millisecond) // Give it a moment?
+			time.Sleep(500 * time.Millisecond)
 		}
 	}
 
-	// Try to get info from local DB first for consistency
 	dbInfo, _ := s.Store.GetDeviceInfo(token)
 
 	status := &SessionStatus{
@@ -574,7 +592,7 @@ func (s *Service) GetStatus(token string) (*SessionStatus, error) {
 	}
 
 	if dbInfo != nil {
-		status.Name = dbInfo.Name // Prefer DB name
+		status.Name = dbInfo.Name
 	}
 
 	if client.Store.ID != nil {
@@ -584,18 +602,14 @@ func (s *Service) GetStatus(token string) (*SessionStatus, error) {
 			status.Name = client.Store.PushName
 		}
 
-		// Fallback: Jika nama di database kosong tapi client punya PushName, sync ke database
 		if (dbInfo == nil || dbInfo.Name == "") && client.Store.PushName != "" && client.Store.PushName != client.Store.ID.User {
 			go s.Store.UpdateTokenJID(token, *client.Store.ID, client.Store.PushName)
 			fmt.Printf("Token %s: GetStatus - sinkronkan nama ke database: %s\n", token, client.Store.PushName)
 		}
 
-		// Try to get profile picture
-		// We use a short timeout context to avoid blocking too long
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		// Get profile picture using Non-AD JID (User JID)
 		ppJID := client.Store.ID.ToNonAD()
 		pic, err := client.GetProfilePictureInfo(ctx, ppJID, &whatsmeow.GetProfilePictureParams{
 			Preview: true,
@@ -605,7 +619,6 @@ func (s *Service) GetStatus(token string) (*SessionStatus, error) {
 		} else if pic != nil {
 			status.ProfilePicURL = pic.URL
 		}
-
 	}
 
 	return status, nil
@@ -632,17 +645,16 @@ func (s *Service) Logout(token string) error {
 		return fmt.Errorf("not logged in")
 	}
 
-	// Logout from WhatsApp (this deletes the session from the store)
 	if err := client.Logout(context.Background()); err != nil {
 		return fmt.Errorf("failed to logout: %w", err)
 	}
 
-	// Clear JID dan nama dari database supaya dashboard menampilkan status yang benar
 	s.Store.ClearTokenJID(token)
 
-	// Hapus client dari cache agar state bersih
+	// Remove from pool
+	s.clientPool.Remove(token)
+
 	s.mu.Lock()
-	delete(s.Clients, token)
 	delete(s.QRCodes, token)
 	s.mu.Unlock()
 
@@ -655,15 +667,12 @@ func (s *Service) Reconnect(token string) error {
 		return err
 	}
 
-	// Disconnect if connected
 	if client.IsConnected() {
 		client.Disconnect()
 	}
 
-	// Wait a bit?
 	time.Sleep(500 * time.Millisecond)
 
-	// Connect again
 	if err := client.Connect(); err != nil {
 		return fmt.Errorf("failed to connect: %w", err)
 	}
@@ -686,12 +695,15 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 		}
 	}
 
+	// Normalize phone number if not already a JID
+	if !strings.Contains(to, "@") {
+		to = NormalizePhone(to) + "@s.whatsapp.net"
+	}
 	recipient, err := types.ParseJID(to)
 	if err != nil {
 		return "", fmt.Errorf("invalid recipient JID: %w", err)
 	}
 
-	// Check if registered (skip for groups)
 	if recipient.Server != "g.us" {
 		isOnWhatsApp, err := client.IsOnWhatsApp(context.Background(), []string{recipient.User})
 		if err != nil {
@@ -702,8 +714,8 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 		}
 	}
 
-	// Download file
-	resp, err := http.Get(url)
+	// Use pooled HTTP client
+	resp, err := s.httpClient.Get().Get(url)
 	if err != nil {
 		return "", fmt.Errorf("failed to download media: %w", err)
 	}
@@ -714,7 +726,6 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 		return "", fmt.Errorf("failed to read media body: %w", err)
 	}
 
-	// Detect content type
 	mimeType := http.DetectContentType(data)
 	if resp.Header.Get("Content-Type") != "" && resp.Header.Get("Content-Type") != "application/octet-stream" {
 		mimeType = resp.Header.Get("Content-Type")
@@ -741,7 +752,6 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 			},
 		}
 	} else {
-		// Document
 		uploaded, err := client.Upload(context.Background(), data, whatsmeow.MediaDocument)
 		if err != nil {
 			return "", fmt.Errorf("failed to upload document: %w", err)
@@ -771,4 +781,9 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 		return "", err
 	}
 	return sendResp.ID, nil
+}
+
+// GetClientCount returns the number of connected clients (for monitoring)
+func (s *Service) GetClientCount() int {
+	return s.clientPool.Count()
 }

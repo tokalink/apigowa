@@ -6,7 +6,10 @@ toolchain go1.24.11
 
 require (
 	github.com/gin-gonic/gin v1.11.0
+	github.com/go-sql-driver/mysql v1.9.3
 	github.com/joho/godotenv v1.5.1
+	github.com/kardianos/service v1.2.4
+	github.com/lib/pq v1.10.9
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	go.mau.fi/whatsmeow v0.0.0-20251217143725-11cf47c62d32
 	golang.org/x/crypto v0.46.0
@@ -32,7 +35,6 @@ require (
 	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/kardianos/service v1.2.4 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect

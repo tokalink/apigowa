@@ -5,98 +5,91 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"sync"
 
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
-	"golang.org/x/crypto/bcrypt"
-	_ "modernc.org/sqlite"
 )
 
+// Store wraps the database driver and whatsmeow container
 type Store struct {
+	Driver    DBDriver
 	Container *sqlstore.Container
-	DB        *sql.DB
-	// Cache mapping Token -> JID
-	TokenCache map[string]types.JID
-	mu         sync.RWMutex
 }
 
+// NewStore creates a new store with the configured database driver
 func NewStore(dbPath string) (*Store, error) {
-	// Set device name dari environment variable
+	// Load configuration from environment
+	cfg := NewDBConfigFromEnv()
+
+	// Override file path if provided (for backwards compatibility)
+	if dbPath != "" && cfg.Driver == "sqlite" {
+		cfg.FilePath = dbPath
+	}
+
+	// Create database driver
+	driver, err := NewDriver(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create database driver: %w", err)
+	}
+
+	// Set device name from environment variable
 	deviceName := os.Getenv("DEVICE_NAME")
 	if deviceName == "" {
 		deviceName = "ApiWago"
 	}
-	store.SetOSInfo(deviceName, [3]uint32{2, 2450, 0}) // Nama device, versi
+	store.SetOSInfo(deviceName, [3]uint32{2, 2450, 0})
+
+	// Create whatsmeow container
+	// For whatsmeow, we need to use SQLite regardless of main DB
+	// because whatsmeow stores encrypted session data
+	waDBPath := cfg.FilePath
+	if cfg.Driver != "sqlite" {
+		// Use a separate SQLite file for whatsmeow session data
+		waDBPath = "whatsmeow_sessions.db"
+	}
 
 	dbLog := waLog.Stdout("Database", "WARN", true)
-	// Use WAL mode and busy timeout to avoid locking issues
-	container, err := sqlstore.New(context.Background(), "sqlite", fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout=5000&_pragma=journal_mode=WAL", dbPath), dbLog)
+	container, err := sqlstore.New(context.Background(), "sqlite",
+		fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout=5000&_pragma=journal_mode=WAL", waDBPath),
+		dbLog,
+	)
 	if err != nil {
-		return nil, err
+		driver.Close()
+		return nil, fmt.Errorf("failed to create whatsmeow container: %w", err)
 	}
-
-	// Open raw DB connection for our custom table
-	// Use same pragmas
-	rawDB, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout=5000&_pragma=journal_mode=WAL", dbPath))
-	if err != nil {
-		return nil, err
-	}
-
-	// Create a table to map Tokens to JIDs
-	_, err = rawDB.Exec(`
-		CREATE TABLE IF NOT EXISTS account_tokens (
-			token TEXT PRIMARY KEY,
-			jid TEXT,
-			push_name TEXT,
-			webhook_url TEXT
-		);
-		CREATE TABLE IF NOT EXISTS admin (
-			username TEXT PRIMARY KEY,
-			password_hash TEXT
-		);
-	`)
-	if err != nil {
-		return nil, err
-	}
-
-	// Migration for existing tables (ignore errors if columns already exist)
-	_, _ = rawDB.Exec("ALTER TABLE account_tokens ADD COLUMN push_name TEXT;")
-	_, _ = rawDB.Exec("ALTER TABLE account_tokens ADD COLUMN webhook_url TEXT;")
-	_, _ = rawDB.Exec("ALTER TABLE account_tokens ADD COLUMN workspace TEXT;")
 
 	return &Store{
-		Container:  container,
-		DB:         rawDB,
-		TokenCache: make(map[string]types.JID),
+		Driver:    driver,
+		Container: container,
 	}, nil
 }
 
-// GetDevice returns the device store for a given token.
-// If it's a new token, it creates a new device.
-func (s *Store) GetDevice(token string) (*store.Device, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// Close closes all database connections
+func (s *Store) Close() error {
+	return s.Driver.Close()
+}
 
-	// 1. Check if we already have a JID for this token
-	var jidStr sql.NullString
-	err := s.DB.QueryRow("SELECT jid FROM account_tokens WHERE token = ?", token).Scan(&jidStr)
-	if err != nil && err != sql.ErrNoRows {
+// DB returns the underlying sql.DB for backwards compatibility
+func (s *Store) DB() *sql.DB {
+	return s.Driver.GetDB()
+}
+
+// GetDevice returns the device store for a given token
+func (s *Store) GetDevice(token string) (*store.Device, error) {
+	exists, jidStr, err := s.Driver.TokenExists(token)
+	if err != nil {
 		return nil, err
 	}
 
-	if jidStr.Valid && jidStr.String != "" {
-		fmt.Printf("[Store] Found JID %s for token %s\n", jidStr.String, token)
-		// Existing device
-		jid, _ := types.ParseJID(jidStr.String)
-		// Fix: Pass context
+	if exists && jidStr != "" {
+		fmt.Printf("[Store] Found JID %s for token %s\n", jidStr, token)
+		jid, _ := types.ParseJID(jidStr)
 		device, err := s.Container.GetDevice(context.Background(), jid)
 		if err != nil {
 			fmt.Printf("[Store] Failed to load device from container for JID %s: %v. Resetting token.\n", jid, err)
-			// Device mismatch? Clear JID
-			s.DB.Exec("UPDATE account_tokens SET jid = NULL WHERE token = ?", token)
+			s.Driver.ClearTokenJID(token)
 			return s.Container.NewDevice(), nil
 		}
 		if device == nil {
@@ -107,13 +100,10 @@ func (s *Store) GetDevice(token string) (*store.Device, error) {
 	}
 
 	fmt.Printf("[Store] No JID found for token %s. Creating new device.\n", token)
-	// 2. New Token or Token without JID -> Create new Device
 	device := s.Container.NewDevice()
 
-	// Insert token if not exists.
-	if err == sql.ErrNoRows {
-		_, err = s.DB.Exec("INSERT INTO account_tokens (token, jid) VALUES (?, NULL)", token)
-		if err != nil {
+	if !exists {
+		if err := s.Driver.InsertToken(token); err != nil {
 			return nil, err
 		}
 	}
@@ -121,260 +111,78 @@ func (s *Store) GetDevice(token string) (*store.Device, error) {
 	return device, nil
 }
 
-// SaveLogin associates a token with a JID after successful pairing
+// UpdateTokenJID updates the JID for a token
 func (s *Store) UpdateTokenJID(token string, jid types.JID, pushName string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	fmt.Printf("[Store] Updating token %s with JID %s and Name %s\n", token, jid.String(), pushName)
-	_, err := s.DB.Exec("UPDATE account_tokens SET jid = ?, push_name = ? WHERE token = ?", jid.String(), pushName, token)
-	return err
+	return s.Driver.UpdateTokenJID(token, jid, pushName)
 }
 
-// ClearTokenJID menghapus JID dan nama dari database (dipakai saat logout)
+// ClearTokenJID clears the JID for a token (used during logout)
 func (s *Store) ClearTokenJID(token string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	fmt.Printf("[Store] Clearing JID and name for token %s\n", token)
-	_, err := s.DB.Exec("UPDATE account_tokens SET jid = NULL, push_name = NULL WHERE token = ?", token)
-	return err
+	return s.Driver.ClearTokenJID(token)
 }
 
-func (s *Store) UpdateWebhook(token, url string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, err := s.DB.Exec("UPDATE account_tokens SET webhook_url = ? WHERE token = ?", url, token)
-	return err
-}
-
-func (s *Store) GetWebhook(token string) (string, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var url sql.NullString
-	err := s.DB.QueryRow("SELECT webhook_url FROM account_tokens WHERE token = ?", token).Scan(&url)
-	if err != nil {
-		return "", err
-	}
-	return url.String, nil
-}
-
-func (s *Store) UpdateWorkspace(token, workspace string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Insert if not exists
-	var exists bool
-	s.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM account_tokens WHERE token = ?)", token).Scan(&exists)
-	if !exists {
-		_, err := s.DB.Exec("INSERT INTO account_tokens (token, workspace) VALUES (?, ?)", token, workspace)
-		return err
-	}
-	_, err := s.DB.Exec("UPDATE account_tokens SET workspace = ? WHERE token = ?", workspace, token)
-	return err
-}
-
-func (s *Store) GetWorkspaces() ([]string, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	rows, err := s.DB.Query("SELECT DISTINCT workspace FROM account_tokens WHERE workspace IS NOT NULL AND workspace != ''")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var workspaces []string
-	for rows.Next() {
-		var w string
-		if err := rows.Scan(&w); err == nil {
-			workspaces = append(workspaces, w)
-		}
-	}
-	return workspaces, nil
-}
-
-func (s *Store) GetDeviceInfo(token string) (*DeviceSummary, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var d DeviceSummary
-	var jid, name, webhook, workspace sql.NullString
-	err := s.DB.QueryRow("SELECT token, jid, push_name, webhook_url, workspace FROM account_tokens WHERE token = ?", token).Scan(&d.Token, &jid, &name, &webhook, &workspace)
-	if err != nil {
-		return nil, err
-	}
-	d.JID = jid.String
-	d.Name = name.String
-	d.Webhook = webhook.String
-	d.Workspace = workspace.String
-	return &d, nil
-}
-
-func (s *Store) GetJID(token string) (types.JID, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var jidStr string
-	err := s.DB.QueryRow("SELECT jid FROM account_tokens WHERE token = ? AND jid IS NOT NULL", token).Scan(&jidStr)
-	if err != nil {
-		return types.EmptyJID, err
-	}
-	return types.ParseJID(jidStr)
-}
-
+// DeleteDevice deletes a device/token
 func (s *Store) DeleteDevice(token string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	// Get JID first to clean up container
-	var jidStr sql.NullString
-	err := s.DB.QueryRow("SELECT jid FROM account_tokens WHERE token = ?", token).Scan(&jidStr)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil // Already deleted
-		}
-		return err
-	}
-
-	// Delete from local table
-	_, err = s.DB.Exec("DELETE FROM account_tokens WHERE token = ?", token)
-	if err != nil {
-		return err
-	}
-
-	// Cleanup whatsmeow store if JID was present
-	if jidStr.Valid && jidStr.String != "" {
-		jid, _ := types.ParseJID(jidStr.String)
-		// Fix: GetDevice first then delete
+	jid, err := s.Driver.GetJID(token)
+	if err == nil && jid != types.EmptyJID {
 		device, err := s.Container.GetDevice(context.Background(), jid)
 		if err == nil && device != nil {
-			return s.Container.DeleteDevice(context.Background(), device)
+			s.Container.DeleteDevice(context.Background(), device)
 		}
 	}
-	return nil
+
+	return s.Driver.DeleteToken(token)
 }
 
+// GetDeviceInfo retrieves device info
+func (s *Store) GetDeviceInfo(token string) (*DeviceSummary, error) {
+	return s.Driver.GetDeviceInfo(token)
+}
+
+// GetDevices retrieves paginated devices
+func (s *Store) GetDevices(limit, offset int, search, workspace string) ([]DeviceSummary, int, error) {
+	return s.Driver.GetDevices(limit, offset, search, workspace)
+}
+
+// GetJID retrieves JID for a token
+func (s *Store) GetJID(token string) (types.JID, error) {
+	return s.Driver.GetJID(token)
+}
+
+// UpdateWebhook updates webhook URL
+func (s *Store) UpdateWebhook(token, url string) error {
+	return s.Driver.UpdateWebhook(token, url)
+}
+
+// GetWebhook retrieves webhook URL
+func (s *Store) GetWebhook(token string) (string, error) {
+	return s.Driver.GetWebhook(token)
+}
+
+// UpdateWorkspace updates workspace
+func (s *Store) UpdateWorkspace(token, workspace string) error {
+	return s.Driver.UpdateWorkspace(token, workspace)
+}
+
+// GetWorkspaces retrieves all workspaces
+func (s *Store) GetWorkspaces() ([]string, error) {
+	return s.Driver.GetWorkspaces()
+}
+
+// SetCredentials sets admin credentials
 func (s *Store) SetCredentials(username, password string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-
-	// upsert
-	_, err = s.DB.Exec("INSERT OR REPLACE INTO admin (username, password_hash) VALUES (?, ?)", username, string(hashedPassword))
-	return err
+	return s.Driver.SetCredentials(username, password)
 }
 
+// CheckCredentials verifies admin credentials
 func (s *Store) CheckCredentials(username, password string) (bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var hash string
-	err := s.DB.QueryRow("SELECT password_hash FROM admin WHERE username = ?", username).Scan(&hash)
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-
-	err = bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-	if err != nil {
-		return false, nil // Invalid password
-	}
-
-	return true, nil
+	return s.Driver.CheckCredentials(username, password)
 }
 
+// IsSetupDetails checks if setup is complete
 func (s *Store) IsSetupDetails() (bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var count int
-	err := s.DB.QueryRow("SELECT COUNT(*) FROM admin").Scan(&count)
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
-type DeviceSummary struct {
-	Token     string `json:"token"`
-	JID       string `json:"jid"`
-	Name      string `json:"name"`
-	Webhook   string `json:"webhook"`
-	Workspace string `json:"workspace"`
-}
-
-func (s *Store) GetDevices(limit, offset int, search, workspaceFilter string) ([]DeviceSummary, int, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Base query
-	query := "SELECT token, jid, push_name, webhook_url, workspace FROM account_tokens"
-	countQuery := "SELECT COUNT(*) FROM account_tokens"
-	var args []interface{}
-	var whereClauses []string
-
-	if search != "" {
-		whereClauses = append(whereClauses, "token LIKE ?")
-		args = append(args, "%"+search+"%")
-	}
-	if workspaceFilter != "" {
-		whereClauses = append(whereClauses, "workspace = ?")
-		args = append(args, workspaceFilter)
-	}
-
-	if len(whereClauses) > 0 {
-		clause := " WHERE " + whereClauses[0]
-		for i := 1; i < len(whereClauses); i++ {
-			clause += " AND " + whereClauses[i]
-		}
-		query += clause
-		countQuery += clause
-	}
-
-	query += " LIMIT ? OFFSET ?"
-	// Need to duplicate args for count query? No, count uses same args less limit/offset
-	// Wait, count args must match countQuery placeholders.
-	countArgs := make([]interface{}, len(args))
-	copy(countArgs, args)
-
-	args = append(args, limit, offset)
-
-	// Get Total Count
-	var total int
-	err := s.DB.QueryRow(countQuery, countArgs...).Scan(&total)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	// Get Data
-	rows, err := s.DB.Query(query, args...)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-
-	var devices []DeviceSummary
-	for rows.Next() {
-		var token string
-		var jid sql.NullString
-		var pushName sql.NullString
-		var webhook sql.NullString
-		var workspace sql.NullString
-
-		if err := rows.Scan(&token, &jid, &pushName, &webhook, &workspace); err != nil {
-			return nil, 0, err
-		}
-		devices = append(devices, DeviceSummary{
-			Token:     token,
-			JID:       jid.String,
-			Name:      pushName.String,
-			Webhook:   webhook.String,
-			Workspace: workspace.String,
-		})
-	}
-	return devices, total, nil
-
+	return s.Driver.IsSetupComplete()
 }

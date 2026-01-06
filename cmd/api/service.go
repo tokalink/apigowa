@@ -24,6 +24,7 @@ import (
 type program struct {
 	server    *http.Server
 	appStore  *store.Store
+	waService *whatsapp.Service
 	waitGroup sync.WaitGroup
 }
 
@@ -46,8 +47,12 @@ func (p *program) Stop(s service.Service) error {
 		}
 	}
 
-	if p.appStore != nil && p.appStore.DB != nil {
-		p.appStore.DB.Close()
+	if p.waService != nil {
+		p.waService.Close()
+	}
+
+	if p.appStore != nil {
+		p.appStore.Close()
 	}
 
 	return nil
@@ -60,7 +65,10 @@ func (p *program) run() {
 	}
 
 	// Initialize Store
-	dbPath := "store.db"
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "store.db"
+	}
 	appStore, err := store.NewStore(dbPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize store: %v", err)
@@ -70,6 +78,7 @@ func (p *program) run() {
 	// Initialize Service
 	webhookURL := os.Getenv("WEBHOOK")
 	waService := whatsapp.NewService(appStore, webhookURL)
+	p.waService = waService
 
 	// Initialize Server handlers
 	server := api.NewServer(waService)

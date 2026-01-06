@@ -103,18 +103,22 @@ func runForeground() {
 	}
 
 	// Ensure store directory exists
-	dbPath := "store.db"
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "store.db"
+	}
 
 	// Initialize Store
 	appStore, err := store.NewStore(dbPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize store: %v", err)
 	}
-	defer appStore.DB.Close()
+	defer appStore.Close()
 
 	// Initialize Service
 	webhookURL := os.Getenv("WEBHOOK")
 	waService := whatsapp.NewService(appStore, webhookURL)
+	defer waService.Close()
 
 	// Initialize Server handlers
 	server := api.NewServer(waService)
