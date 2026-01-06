@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -111,10 +112,18 @@ func (p *program) run() {
 
 // getServiceConfig mengembalikan konfigurasi service
 func getServiceConfig() *service.Config {
+	// Dapatkan path executable untuk menentukan working directory
+	exePath, err := os.Executable()
+	if err != nil {
+		exePath = "."
+	}
+	workDir := filepath.Dir(exePath)
+
 	return &service.Config{
-		Name:        "apiwago",
-		DisplayName: "ApiWago WhatsApp Gateway",
-		Description: "WhatsApp Multi-Device API Gateway Service",
+		Name:             "apiwago",
+		DisplayName:      "ApiWago WhatsApp Gateway",
+		Description:      "WhatsApp Multi-Device API Gateway Service",
+		WorkingDirectory: workDir,
 	}
 }
 
