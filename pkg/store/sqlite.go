@@ -137,7 +137,7 @@ func (d *SQLiteDriver) UpdateTokenJID(token string, jid types.JID, pushName stri
 	defer d.mu.Unlock()
 
 	_, err := d.db.Exec(
-		"UPDATE account_tokens SET jid = ?, push_name = ?, updated_at = CURRENT_TIMESTAMP WHERE token = ?",
+		"UPDATE account_tokens SET jid = ?, push_name = ? WHERE token = ?",
 		jid.String(), pushName, token,
 	)
 	return err
@@ -149,7 +149,7 @@ func (d *SQLiteDriver) ClearTokenJID(token string) error {
 	defer d.mu.Unlock()
 
 	_, err := d.db.Exec(
-		"UPDATE account_tokens SET jid = NULL, push_name = NULL, updated_at = CURRENT_TIMESTAMP WHERE token = ?",
+		"UPDATE account_tokens SET jid = NULL, push_name = NULL WHERE token = ?",
 		token,
 	)
 	return err
@@ -233,7 +233,7 @@ func (d *SQLiteDriver) GetDevices(limit, offset int, search, workspaceFilter str
 		countQuery += whereClause
 	}
 
-	query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	query += " ORDER BY token DESC LIMIT ? OFFSET ?"
 
 	// Get total count
 	countArgs := make([]interface{}, len(args))
@@ -277,7 +277,7 @@ func (d *SQLiteDriver) UpdateWebhook(token, url string) error {
 	defer d.mu.Unlock()
 
 	_, err := d.db.Exec(
-		"UPDATE account_tokens SET webhook_url = ?, updated_at = CURRENT_TIMESTAMP WHERE token = ?",
+		"UPDATE account_tokens SET webhook_url = ? WHERE token = ?",
 		url, token,
 	)
 	return err
@@ -304,7 +304,7 @@ func (d *SQLiteDriver) UpdateWorkspace(token, workspace string) error {
 	// Insert if not exists, update if exists
 	_, err := d.db.Exec(`
 		INSERT INTO account_tokens (token, workspace) VALUES (?, ?)
-		ON CONFLICT(token) DO UPDATE SET workspace = ?, updated_at = CURRENT_TIMESTAMP
+		ON CONFLICT(token) DO UPDATE SET workspace = ?
 	`, token, workspace, workspace)
 	return err
 }
@@ -373,4 +373,25 @@ func (d *SQLiteDriver) IsSetupComplete() (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// GetLoggedInTokens returns all tokens with valid JIDs
+func (d *SQLiteDriver) GetLoggedInTokens() ([]string, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.db.Query("SELECT token FROM account_tokens WHERE jid IS NOT NULL AND jid != ''")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tokens []string
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err == nil {
+			tokens = append(tokens, token)
+		}
+	}
+	return tokens, nil
 }

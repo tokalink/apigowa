@@ -400,3 +400,24 @@ func (d *PostgresDriver) IsSetupComplete() (bool, error) {
 	}
 	return count > 0, nil
 }
+
+// GetLoggedInTokens returns all tokens with valid JIDs
+func (d *PostgresDriver) GetLoggedInTokens() ([]string, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.db.Query("SELECT token FROM account_tokens WHERE jid IS NOT NULL AND jid != ''")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tokens []string
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err == nil {
+			tokens = append(tokens, token)
+		}
+	}
+	return tokens, nil
+}

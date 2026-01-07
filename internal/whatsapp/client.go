@@ -61,6 +61,45 @@ func (s *Service) Close() {
 	s.workerPool.Stop()
 }
 
+// AutoReconnect connects all previously logged-in accounts
+// Call this after creating the service to auto-reconnect on startup
+func (s *Service) AutoReconnect() {
+	tokens, err := s.Store.GetLoggedInTokens()
+	if err != nil {
+		fmt.Printf("[AutoReconnect] Failed to get logged-in tokens: %v\n", err)
+		return
+	}
+
+	if len(tokens) == 0 {
+		fmt.Println("[AutoReconnect] No logged-in accounts to reconnect")
+		return
+	}
+
+	fmt.Printf("[AutoReconnect] Reconnecting %d accounts...\n", len(tokens))
+
+	// Reconnect each token in a goroutine
+	for _, token := range tokens {
+		go func(t string) {
+			client, err := s.GetClient(t)
+			if err != nil {
+				fmt.Printf("[AutoReconnect] Failed to get client for %s: %v\n", t, err)
+				return
+			}
+
+			// Only connect if has valid stored session
+			if client.Store.ID != nil {
+				if !client.IsConnected() {
+					if err := client.Connect(); err != nil {
+						fmt.Printf("[AutoReconnect] Failed to connect %s: %v\n", t, err)
+					} else {
+						fmt.Printf("[AutoReconnect] Connected: %s\n", t)
+					}
+				}
+			}
+		}(token)
+	}
+}
+
 func (s *Service) GetClient(token string) (*whatsmeow.Client, error) {
 	// Try to get from pool first
 	if client := s.clientPool.Get(token); client != nil {
@@ -306,37 +345,80 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 		return
 	}
 
-	var eventType string
-	var eventData interface{}
+	var payload map[string]interface{}
 
 	switch v := evt.(type) {
 	case *events.Message:
-		eventType = "message"
-		eventData = map[string]interface{}{
-			"id":        v.Info.ID,
-			"chat":      v.Info.Chat.String(),
-			"sender":    v.Info.Sender.String(),
-			"timestamp": v.Info.Timestamp.Unix(),
-			"message":   v.Message,
-			"push_name": v.Info.PushName,
+		// Get phone number from sender (remove @s.whatsapp.net suffix)
+		phone := v.Info.Sender.User
+
+		// Get message text
+		msgText := v.Message.GetConversation()
+		if msgText == "" {
+			msgText = v.Message.GetExtendedTextMessage().GetText()
 		}
+
+		// Determine message type
+		msgType := "conversation"
+		if v.Message.GetImageMessage() != nil {
+			msgType = "image"
+		} else if v.Message.GetVideoMessage() != nil {
+			msgType = "video"
+		} else if v.Message.GetAudioMessage() != nil {
+			msgType = "audio"
+		} else if v.Message.GetDocumentMessage() != nil {
+			msgType = "document"
+		} else if v.Message.GetStickerMessage() != nil {
+			msgType = "sticker"
+		} else if v.Message.GetExtendedTextMessage() != nil {
+			msgType = "extendedText"
+		}
+
+		// Build original message structure for "messages" field
+		originalMessage := []map[string]interface{}{
+			{
+				"key": map[string]interface{}{
+					"remoteJid": v.Info.Chat.String(),
+					"fromMe":    v.Info.IsFromMe,
+					"id":        v.Info.ID,
+				},
+				"messageTimestamp": v.Info.Timestamp.Unix(),
+				"pushName":         v.Info.PushName,
+				"broadcast":        v.Info.IsGroup,
+				"message":          v.Message,
+			},
+		}
+
+		// Convert original message to JSON string
+		messagesJSON, _ := json.Marshal(originalMessage)
+
+		payload = map[string]interface{}{
+			"token":     token,
+			"event":     "message",
+			"phone":     phone,
+			"fromMe":    v.Info.IsFromMe,
+			"pushName":  v.Info.PushName,
+			"text":      msgText,
+			"messages":  string(messagesJSON),
+			"type":      msgType,
+			"update_at": time.Now().Format("2006-01-02 15:04:05"),
+			"message":   "Hello from Whatsapp Callback",
+		}
+
 	case *events.Receipt:
-		eventType = "receipt"
-		eventData = map[string]interface{}{
-			"chat":        v.Chat.String(),
-			"sender":      v.Sender.String(),
-			"timestamp":   v.Timestamp.Unix(),
-			"type":        v.Type,
-			"message_ids": v.MessageIDs,
+		payload = map[string]interface{}{
+			"token":     token,
+			"event":     "receipt",
+			"chat":      v.Chat.String(),
+			"sender":    v.Sender.String(),
+			"timestamp": v.Timestamp.Unix(),
+			"type":      string(v.Type),
+			"ids":       v.MessageIDs,
+			"update_at": time.Now().Format("2006-01-02 15:04:05"),
 		}
+
 	default:
 		return
-	}
-
-	payload := map[string]interface{}{
-		"token": token,
-		"event": eventType,
-		"data":  eventData,
 	}
 
 	jsonBody, err := json.Marshal(payload)
@@ -435,28 +517,30 @@ func (s *Service) LoginStream(ctx context.Context, token string, qrStream chan<-
 
 var ErrUserNotRegistered = fmt.Errorf("user not registered on WhatsApp")
 
-// NormalizePhone normalizes phone number to WhatsApp format
-// - Removes special characters (-, spaces, parentheses, etc.)
-// - Converts 08xxx to 628xxx
-// - Removes + prefix
-func NormalizePhone(phone string) string {
-	// Remove all non-numeric characters except +
-	re := regexp.MustCompile(`[^0-9+]`)
-	phone = re.ReplaceAllString(phone, "")
+// Pre-compiled regex for phone normalization
+var phoneCleanRegex = regexp.MustCompile(`[^0-9]`)
 
-	// Remove + prefix
-	phone = strings.TrimPrefix(phone, "+")
+// NormalizePhone normalizes phone number to WhatsApp format
+// - Removes ALL non-numeric characters (including +, -, spaces, parentheses, etc.)
+// - Converts 08xxx to 628xxx
+func NormalizePhone(phone string) string {
+	original := phone
+
+	// Remove ALL non-numeric characters
+	phone = phoneCleanRegex.ReplaceAllString(phone, "")
 
 	// Convert 08 prefix to 628 (Indonesian format)
 	if strings.HasPrefix(phone, "08") {
 		phone = "62" + phone[1:]
 	}
 
-	// Handle case where someone put 0628 or similar
-	if strings.HasPrefix(phone, "0") {
+	// Handle case where someone put 0628 or similar (after removing +)
+	if strings.HasPrefix(phone, "0") && len(phone) > 1 {
 		phone = phone[1:]
 	}
 
+	// Print to console for debugging
+	fmt.Printf("[NormalizePhone] %s -> %s\n", original, phone)
 	return phone
 }
 
@@ -472,20 +556,45 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 
 	// Normalize phone number if not already a JID
 	if !strings.Contains(to, "@") {
-		to = NormalizePhone(to) + "@s.whatsapp.net"
+		normalized := NormalizePhone(to)
+		fmt.Printf("[SendMessage] Normalized phone: %s -> %s\n", to, normalized)
+		to = normalized + "@s.whatsapp.net"
 	}
 	recipient, err := types.ParseJID(to)
 	if err != nil {
 		return "", fmt.Errorf("invalid recipient JID: %w", err)
 	}
 
-	if recipient.Server != "g.us" {
-		isOnWhatsApp, err := client.IsOnWhatsApp(context.Background(), []string{recipient.User})
-		if err != nil {
-			return "", fmt.Errorf("failed to check if on whatsapp: %w", err)
+	// Check if registered on WhatsApp (skip for groups)
+	// Can be disabled with SKIP_ISONWHATSAPP=true in .env
+	skipCheck := os.Getenv("SKIP_ISONWHATSAPP") == "true"
+	if recipient.Server != "g.us" && !skipCheck {
+		// For IsOnWhatsApp, we need to send number WITHOUT country code
+		// because WhatsApp will add country code automatically based on account region
+		phoneToCheck := recipient.User
+		// Strip Indonesian country code (62) if present to avoid double 62
+		if strings.HasPrefix(phoneToCheck, "62") && len(phoneToCheck) > 2 {
+			phoneToCheck = phoneToCheck[2:]
 		}
-		if len(isOnWhatsApp) == 0 || !isOnWhatsApp[0].IsIn {
-			return "", ErrUserNotRegistered
+
+		fmt.Printf("[SendMessage] IsOnWhatsApp checking: %s (from %s)\n", phoneToCheck, recipient.User)
+
+		// Use 30 second timeout for IsOnWhatsApp check
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		isOnWhatsApp, err := client.IsOnWhatsApp(ctx, []string{phoneToCheck})
+		cancel() // Cancel immediately after call
+
+		if err != nil {
+			// Log the error but don't fail - try to send anyway
+			fmt.Printf("[SendMessage] IsOnWhatsApp check failed for %s: %v (akan tetap coba kirim)\n", phoneToCheck, err)
+		} else if len(isOnWhatsApp) > 0 {
+			fmt.Printf("[SendMessage] IsOnWhatsApp result for %s: IsIn=%v, JID=%s\n",
+				phoneToCheck, isOnWhatsApp[0].IsIn, isOnWhatsApp[0].JID.String())
+			if !isOnWhatsApp[0].IsIn {
+				return "", ErrUserNotRegistered
+			}
+		} else {
+			fmt.Printf("[SendMessage] IsOnWhatsApp returned empty result for %s (akan tetap coba kirim)\n", phoneToCheck)
 		}
 	}
 
@@ -493,8 +602,17 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 		Conversation: proto.String(text),
 	}
 
-	resp, err := client.SendMessage(context.Background(), recipient, msg)
+	// Send with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := client.SendMessage(ctx, recipient, msg)
 	if err != nil {
+		// Check if it's a "not registered" error from WhatsApp
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "not on whatsapp") || strings.Contains(errStr, "unknown user") || strings.Contains(errStr, "recipient not found") {
+			return "", ErrUserNotRegistered
+		}
 		return "", err
 	}
 	return resp.ID, nil
@@ -697,20 +815,44 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 
 	// Normalize phone number if not already a JID
 	if !strings.Contains(to, "@") {
-		to = NormalizePhone(to) + "@s.whatsapp.net"
+		normalized := NormalizePhone(to)
+		fmt.Printf("[SendMedia] Normalized phone: %s -> %s\n", to, normalized)
+		to = normalized + "@s.whatsapp.net"
 	}
 	recipient, err := types.ParseJID(to)
 	if err != nil {
 		return "", fmt.Errorf("invalid recipient JID: %w", err)
 	}
 
-	if recipient.Server != "g.us" {
-		isOnWhatsApp, err := client.IsOnWhatsApp(context.Background(), []string{recipient.User})
-		if err != nil {
-			return "", fmt.Errorf("failed to check if on whatsapp: %w", err)
+	// Check if registered on WhatsApp (skip for groups)
+	skipCheck := os.Getenv("SKIP_ISONWHATSAPP") == "true"
+	if recipient.Server != "g.us" && !skipCheck {
+		// For IsOnWhatsApp, we need to send number WITHOUT country code
+		// because WhatsApp will add country code automatically based on account region
+		phoneToCheck := recipient.User
+		// Strip Indonesian country code (62) if present to avoid double 62
+		if strings.HasPrefix(phoneToCheck, "62") && len(phoneToCheck) > 2 {
+			phoneToCheck = phoneToCheck[2:]
 		}
-		if len(isOnWhatsApp) == 0 || !isOnWhatsApp[0].IsIn {
-			return "", ErrUserNotRegistered
+
+		fmt.Printf("[SendMedia] IsOnWhatsApp checking: %s (from %s)\n", phoneToCheck, recipient.User)
+
+		// Use 30 second timeout for IsOnWhatsApp check
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		isOnWhatsApp, err := client.IsOnWhatsApp(ctx, []string{phoneToCheck})
+		cancel() // Cancel immediately after call
+
+		if err != nil {
+			// Log the error but don't fail - try to send anyway
+			fmt.Printf("[SendMedia] IsOnWhatsApp check failed for %s: %v (akan tetap coba kirim)\n", phoneToCheck, err)
+		} else if len(isOnWhatsApp) > 0 {
+			fmt.Printf("[SendMedia] IsOnWhatsApp result for %s: IsIn=%v, JID=%s\n",
+				phoneToCheck, isOnWhatsApp[0].IsIn, isOnWhatsApp[0].JID.String())
+			if !isOnWhatsApp[0].IsIn {
+				return "", ErrUserNotRegistered
+			}
+		} else {
+			fmt.Printf("[SendMedia] IsOnWhatsApp returned empty result for %s (akan tetap coba kirim)\n", phoneToCheck)
 		}
 	}
 

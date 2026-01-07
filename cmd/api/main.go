@@ -120,6 +120,9 @@ func runForeground() {
 	waService := whatsapp.NewService(appStore, webhookURL)
 	defer waService.Close()
 
+	// Auto-reconnect previously logged-in accounts
+	go waService.AutoReconnect()
+
 	// Initialize Server handlers
 	server := api.NewServer(waService)
 

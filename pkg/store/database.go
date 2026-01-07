@@ -186,3 +186,8 @@ func (s *Store) CheckCredentials(username, password string) (bool, error) {
 func (s *Store) IsSetupDetails() (bool, error) {
 	return s.Driver.IsSetupComplete()
 }
+
+// GetLoggedInTokens returns all tokens with valid JIDs (for auto-reconnect)
+func (s *Store) GetLoggedInTokens() ([]string, error) {
+	return s.Driver.GetLoggedInTokens()
+}

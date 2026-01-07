@@ -38,6 +38,9 @@ type DBDriver interface {
 	SetCredentials(username, password string) error
 	CheckCredentials(username, password string) (bool, error)
 	IsSetupComplete() (bool, error)
+
+	// Utility operations
+	GetLoggedInTokens() ([]string, error) // Returns all tokens with valid JIDs
 }
 
 // DeviceSummary represents a device/token summary

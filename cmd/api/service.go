@@ -80,6 +80,9 @@ func (p *program) run() {
 	waService := whatsapp.NewService(appStore, webhookURL)
 	p.waService = waService
 
+	// Auto-reconnect previously logged-in accounts
+	go waService.AutoReconnect()
+
 	// Initialize Server handlers
 	server := api.NewServer(waService)
 
