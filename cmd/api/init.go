@@ -28,6 +28,11 @@ WEBHOOK=
 # Default: ApiWago
 DEVICE_NAME=ApiWago
 
+# Nama Service Windows. Digunakan saat install sebagai service.
+# Default: apiwago
+# Contoh: my-whatsapp-service
+SERVICE_NAME=apiwago
+
 # =====================
 # Database Configuration
 # =====================
@@ -62,6 +67,10 @@ DB_NAME=apiwago
 # Jika melebihi limit, client yang paling lama tidak aktif akan di-disconnect
 # Default: 1000
 MAX_CLIENTS=1000
+
+# Interval cek koneksi otomatis (format: 2m, 1h)
+# Default: 2m
+RECONNECT_INTERVAL=2m
 
 # Waktu idle timeout dalam menit sebelum client otomatis di-disconnect
 # Default: 30 (menit)
@@ -112,6 +121,7 @@ func runInit() error {
 	fmt.Println("   - APIKEY         : API Key untuk autentikasi")
 	fmt.Println("   - WEBHOOK        : URL webhook untuk pesan masuk")
 	fmt.Println("   - DEVICE_NAME    : Nama device di WhatsApp (default: ApiWago)")
+	fmt.Println("   - SERVICE_NAME   : Nama Windows Service (default: apiwago)")
 	fmt.Println("")
 	fmt.Println("   Konfigurasi Database:")
 	fmt.Println("   - DB_DRIVER      : sqlite, mysql, atau postgres (default: sqlite)")
@@ -124,6 +134,7 @@ func runInit() error {
 	fmt.Println("")
 	fmt.Println("   Konfigurasi Performance:")
 	fmt.Println("   - MAX_CLIENTS         : Max connected clients (default: 1000)")
+	fmt.Println("   - RECONNECT_INTERVAL  : Interval cek koneksi (default: 2m)")
 	fmt.Println("   - CLIENT_IDLE_TIMEOUT : Idle timeout dalam menit (default: 30)")
 	fmt.Println("   - WORKER_POOL_SIZE    : Worker goroutines (default: 100)")
 	fmt.Println("   - HTTP_POOL_SIZE      : HTTP connections (default: 100)")
