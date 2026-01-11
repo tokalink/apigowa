@@ -80,6 +80,12 @@ func (p *program) run() {
 	waService := whatsapp.NewService(appStore, webhookURL)
 	p.waService = waService
 
+	// Auto-reconnect previously logged-in accounts
+	go waService.AutoReconnect()
+
+	// Start periodic connectivity check
+	waService.StartPeriodicCheck(context.Background())
+
 	// Initialize Server handlers
 	server := api.NewServer(waService)
 
@@ -121,6 +127,9 @@ func (p *program) run() {
 
 // getServiceConfig mengembalikan konfigurasi service
 func getServiceConfig() *service.Config {
+	// Load .env explicitly here because this might be called before run()
+	_ = godotenv.Load()
+
 	// Dapatkan path executable untuk menentukan working directory
 	exePath, err := os.Executable()
 	if err != nil {
@@ -128,9 +137,19 @@ func getServiceConfig() *service.Config {
 	}
 	workDir := filepath.Dir(exePath)
 
+	name := os.Getenv("SERVICE_NAME")
+	if name == "" {
+		name = "apiwago"
+	}
+
+	displayName := "ApiWago WhatsApp Gateway"
+	if name != "apiwago" {
+		displayName = fmt.Sprintf("ApiWago (%s)", name)
+	}
+
 	return &service.Config{
-		Name:             "apiwago",
-		DisplayName:      "ApiWago WhatsApp Gateway",
+		Name:             name,
+		DisplayName:      displayName,
 		Description:      "WhatsApp Multi-Device API Gateway Service",
 		WorkingDirectory: workDir,
 	}

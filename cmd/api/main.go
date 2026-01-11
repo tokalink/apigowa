@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -119,6 +120,12 @@ func runForeground() {
 	webhookURL := os.Getenv("WEBHOOK")
 	waService := whatsapp.NewService(appStore, webhookURL)
 	defer waService.Close()
+
+	// Auto-reconnect previously logged-in accounts
+	go waService.AutoReconnect()
+
+	// Start periodic connectivity check
+	waService.StartPeriodicCheck(context.Background())
 
 	// Initialize Server handlers
 	server := api.NewServer(waService)

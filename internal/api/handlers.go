@@ -181,19 +181,17 @@ func (s *Server) SendMessageHandler(c *gin.Context) {
 		return
 	}
 
-	// Format Phone to JID if needed
-	jid := req.Phone
-	if jid != "" && !strings.Contains(jid, "@") {
-		jid = jid + "@s.whatsapp.net"
-	}
+	// Pass phone directly to service - service will handle normalization
+	// DO NOT add @s.whatsapp.net here, let service normalize 08xxx to 628xxx first
+	phone := req.Phone
 
 	var msgID string
 	var err error
 
 	if req.FileUrl != "" {
-		msgID, err = s.Service.SendMedia(string(req.Token), jid, req.FileUrl, req.Message, req.FileName)
+		msgID, err = s.Service.SendMedia(string(req.Token), phone, req.FileUrl, req.Message, req.FileName)
 	} else {
-		msgID, err = s.Service.SendMessage(string(req.Token), jid, req.Message)
+		msgID, err = s.Service.SendMessage(string(req.Token), phone, req.Message)
 	}
 
 	if err != nil {
