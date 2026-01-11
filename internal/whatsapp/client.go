@@ -159,7 +159,6 @@ func (s *Service) checkConnectivity() {
 		}
 	}
 }
-
 func (s *Service) GetClient(token string) (*whatsmeow.Client, error) {
 	// Try to get from pool first
 	if client := s.clientPool.Get(token); client != nil {

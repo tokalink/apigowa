@@ -126,7 +126,6 @@ func runForeground() {
 
 	// Start periodic connectivity check
 	waService.StartPeriodicCheck(context.Background())
-
 	// Initialize Server handlers
 	server := api.NewServer(waService)
 
