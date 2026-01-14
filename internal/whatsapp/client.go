@@ -229,6 +229,18 @@ func (s *Service) handleEvent(token string, client *whatsmeow.Client, evt interf
 		s.workerPool.Submit(func() {
 			s.handleMessage(token, client, v)
 		})
+
+	case *events.LoggedOut:
+		s.workerPool.Submit(func() {
+			fmt.Printf("Token %s logged out. Clearing session.\n", token)
+			s.Store.ClearTokenJID(token)
+			s.clientPool.Remove(token)
+
+			// Also remove from QR codes if any
+			s.mu.Lock()
+			delete(s.QRCodes, token)
+			s.mu.Unlock()
+		})
 	}
 }
 
@@ -408,8 +420,24 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 
 	switch v := evt.(type) {
 	case *events.Message:
+		// Handle LID (Privacy ID) resolution
+		senderJID := v.Info.Sender
+		if senderJID.Server == "lid" {
+			// Get client to access store
+			client, _ := s.GetClient(token)
+			if client != nil && client.Store.LIDs != nil {
+				pnJID, err := client.Store.LIDs.GetPNForLID(context.Background(), senderJID)
+				if err == nil && !pnJID.IsEmpty() {
+					fmt.Printf("[Webhook] Resolved LID %s to Phone %s\n", senderJID, pnJID)
+					senderJID = pnJID
+				} else {
+					fmt.Printf("[Webhook] Failed to resolve LID %s: %v\n", senderJID, err)
+				}
+			}
+		}
+
 		// Get phone number from sender (remove @s.whatsapp.net suffix)
-		phone := v.Info.Sender.User
+		phone := senderJID.User
 
 		// Get message text
 		msgText := v.Message.GetConversation()
@@ -458,10 +486,10 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 			"fromMe":    v.Info.IsFromMe,
 			"pushName":  v.Info.PushName,
 			"text":      msgText,
-			"messages":  string(messagesJSON),
+			"payload":   string(messagesJSON),
 			"type":      msgType,
 			"update_at": time.Now().Format("2006-01-02 15:04:05"),
-			"message":   "Hello from Whatsapp Callback",
+			"message":   msgText,
 		}
 
 	case *events.Receipt:
@@ -486,13 +514,35 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 		return
 	}
 
-	// Use pooled HTTP client
-	resp, err := s.httpClient.Get().Post(webhookURL, "application/json", bytes.NewBuffer(jsonBody))
-	if err != nil {
-		fmt.Printf("Failed to send webhook to %s: %v\n", webhookURL, err)
+	// Use pooled HTTP client with retry logic
+	maxRetries := 3
+	var lastErr error
+
+	for i := 0; i < maxRetries; i++ {
+		// Create buffer for this attempt
+		bodyBuffer := bytes.NewBuffer(jsonBody)
+
+		resp, err := s.httpClient.Get().Post(webhookURL, "application/json", bodyBuffer)
+		if err != nil {
+			lastErr = err
+			fmt.Printf("Attempt %d/%d: Failed to send webhook to %s: %v\n", i+1, maxRetries, webhookURL, err)
+
+			// Wait before retry (exponential backoff: 1s, 2s, 4s...)
+			if i < maxRetries-1 {
+				time.Sleep(time.Duration(1<<i) * time.Second)
+			}
+			continue
+		}
+		resp.Body.Close()
+
+		// Success
+		if i > 0 {
+			fmt.Printf("Successfully sent webhook to %s after %d retries\n", webhookURL, i)
+		}
 		return
 	}
-	defer resp.Body.Close()
+
+	fmt.Printf("Given up sending webhook to %s after %d attempts. Last error: %v\n", webhookURL, maxRetries, lastErr)
 }
 
 func (s *Service) Login(token string) ([]byte, error) {
@@ -796,6 +846,18 @@ func (s *Service) GetStatus(token string) (*SessionStatus, error) {
 		} else if pic != nil {
 			status.ProfilePicURL = pic.URL
 		}
+	}
+
+	// Self-healing: If not logged in (client.Store.ID == nil) but DB has info/JID,
+	// it means state is out of sync (e.g. logged out while server was down).
+	// We should clear the DB state.
+	if client.Store.ID == nil && dbInfo != nil && dbInfo.JID != "" {
+		fmt.Printf("Token %s: GetStatus detects stale state (DB has JID but client disconnected). Clearing session.\n", token)
+		go s.Store.ClearTokenJID(token)
+		// Reset status name in response
+		status.Name = ""
+		status.JID = ""
+		status.Phone = ""
 	}
 
 	return status, nil
