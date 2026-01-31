@@ -185,6 +185,11 @@ func (s *Server) SendMessageHandler(c *gin.Context) {
 	// DO NOT add @s.whatsapp.net here, let service normalize 08xxx to 628xxx first
 	phone := req.Phone
 
+	if phone == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "phone is required"})
+		return
+	}
+
 	var msgID string
 	var err error
 

@@ -156,6 +156,48 @@ func (s *Service) checkConnectivity() {
 			} else {
 				fmt.Printf("[PeriodicCheck] Successfully reconnected %s\n", token)
 			}
+		} else {
+			// Active Health Check (Ping)
+			// Send a presence update to check if connection is really alive
+			// Use a short timeout to detect "frozen" connections quickly
+			// ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			// err := client.SendPresence(types.PresenceAvailable) // SendPresence is often asynchronous in some libs, but usually sends data
+			// In whatsmeow, SendPresence writes to socket. If socket is dead/full, it might block or error.
+
+			// Note: client.SendPresence doesn't take context in older versions? Checking signature...
+			// It seems whatsmeow SendPresence sends a stanza.
+
+			// Let's use a goroutine with timeout to ensure we don't block the loop if SendPresence hangs
+			pingErrChan := make(chan error, 1)
+			go func() {
+				pingErrChan <- client.SendPresence(context.Background(), types.PresenceAvailable)
+			}()
+
+			select {
+			case err := <-pingErrChan:
+				if err != nil {
+					fmt.Printf("[PeriodicCheck] Active ping failed for %s: %v. Force reconnecting...\n", token, err)
+					client.Disconnect()
+					time.Sleep(1 * time.Second)
+					if err := client.Connect(); err != nil {
+						fmt.Printf("[PeriodicCheck] Failed to force reconnect %s: %v\n", token, err)
+					} else {
+						fmt.Printf("[PeriodicCheck] Successfully force reconnected %s\n", token)
+					}
+				} else {
+					// Ping success, connection is alive
+					// fmt.Printf("[PeriodicCheck] Active ping success for %s\n", token)
+				}
+			case <-time.After(10 * time.Second):
+				fmt.Printf("[PeriodicCheck] Active ping timed out for %s. Connection likely frozen. Force reconnecting...\n", token)
+				client.Disconnect() // This might block if lock is held? whatsmeow Connect/Disconnect should be safe
+				time.Sleep(1 * time.Second)
+				if err := client.Connect(); err != nil {
+					fmt.Printf("[PeriodicCheck] Failed to force reconnect %s: %v\n", token, err)
+				} else {
+					fmt.Printf("[PeriodicCheck] Successfully force reconnected %s\n", token)
+				}
+			}
 		}
 	}
 }
@@ -667,6 +709,11 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 	if !strings.Contains(to, "@") {
 		normalized := NormalizePhone(to)
 		fmt.Printf("[SendMessage] Normalized phone: %s -> %s\n", to, normalized)
+
+		if normalized == "" {
+			return "", fmt.Errorf("phone number is empty or invalid")
+		}
+
 		to = normalized + "@s.whatsapp.net"
 	}
 	recipient, err := types.ParseJID(to)
