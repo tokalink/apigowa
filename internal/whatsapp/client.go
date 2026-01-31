@@ -714,6 +714,10 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 			return "", fmt.Errorf("phone number is empty or invalid")
 		}
 
+		if len(normalized) < 5 {
+			return "", fmt.Errorf("phone number too short (minimum 5 digits)")
+		}
+
 		to = normalized + "@s.whatsapp.net"
 	}
 	recipient, err := types.ParseJID(to)
@@ -727,11 +731,8 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 	if recipient.Server != "g.us" && !skipCheck {
 		// For IsOnWhatsApp, we need to send number WITHOUT country code
 		// because WhatsApp will add country code automatically based on account region
+		// EDITED: Actually we should send FULL INT'L NUMBER to be safe and unambiguous
 		phoneToCheck := recipient.User
-		// Strip Indonesian country code (62) if present to avoid double 62
-		if strings.HasPrefix(phoneToCheck, "62") && len(phoneToCheck) > 2 {
-			phoneToCheck = phoneToCheck[2:]
-		}
 
 		fmt.Printf("[SendMessage] IsOnWhatsApp checking: %s (from %s)\n", phoneToCheck, recipient.User)
 
@@ -750,7 +751,8 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 				return "", ErrUserNotRegistered
 			}
 		} else {
-			fmt.Printf("[SendMessage] IsOnWhatsApp returned empty result for %s (akan tetap coba kirim)\n", phoneToCheck)
+			fmt.Printf("[SendMessage] IsOnWhatsApp returned empty result for %s (treating as not registered)\n", phoneToCheck)
+			return "", ErrUserNotRegistered
 		}
 	}
 
