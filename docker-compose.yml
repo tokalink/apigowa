@@ -1,0 +1,14 @@
+services:
+  apiwago:
+    image: apiwago:latest
+    container_name: apiwago
+    env_file:
+      - .env
+    ports:
+      - "${API_PORT}:7900"
+    networks:
+      - 1panel-network
+
+networks:
+  1panel-network:
+    external: true

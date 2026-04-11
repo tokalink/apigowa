@@ -146,6 +146,15 @@ func runForeground() {
 		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
 	})
 	r.StaticFS("/static", web.GetFileSystem())
+	// Serve media files if LOCAL storage is enabled
+	if os.Getenv("SAVE_MEDIA") == "LOCAL" {
+		// Ensure media directory exists
+		if err := os.MkdirAll("media", 0755); err != nil {
+			log.Printf("Failed to create media directory: %v", err)
+		}
+		r.Static("/media", "./media")
+		log.Println("Serving local media at /media")
+	}
 
 	// Run
 	port := os.Getenv("PORT")

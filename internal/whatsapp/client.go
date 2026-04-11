@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -21,6 +22,16 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
+
+	"image"
+	"image/jpeg"
+
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/nfnt/resize"
+
+	// "golang.org/x/image/webp" // Standard image library doesn't support webp decoding easily without external lib, sticking to png/jpg for now or just generic decode
+	_ "image/gif"
 )
 
 type Service struct {
@@ -30,6 +41,10 @@ type Service struct {
 	QRCodes          map[string]string
 	Store            *store.Store
 	WebhookURL       string
+	WebhookType      string // "in" or "all"
+	SaveMedia        string // "NULL", "LOCAL", "S3"
+	S3Client         *minio.Client
+	S3Bucket         string
 	workerPool       *WorkerPool
 	httpClient       *HTTPClientPool
 }
@@ -44,12 +59,49 @@ func NewService(s *store.Store, webhookURL string) *Service {
 	// Load pool configuration from environment
 	poolCfg := NewPoolConfigFromEnv()
 
+	wt := os.Getenv("WEBHOOKTYPE")
+	saveMedia := os.Getenv("SAVE_MEDIA")
+	if saveMedia == "" {
+		saveMedia = "NULL"
+	}
+
+	var s3Client *minio.Client
+	var s3Bucket string
+
+	if saveMedia == "S3" {
+		endpoint := os.Getenv("S3_ENDPOINT")
+		accessKeyID := os.Getenv("S3_ACCESS_KEY")
+		secretAccessKey := os.Getenv("S3_SECRET_KEY")
+		s3Bucket = os.Getenv("S3_BUCKET")
+		useSSL := os.Getenv("S3_USE_SSL") == "true"
+		region := os.Getenv("S3_REGION")
+
+		var err error
+		s3Client, err = minio.New(endpoint, &minio.Options{
+			Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
+			Secure: useSSL,
+			Region: region,
+		})
+		if err != nil {
+			fmt.Printf("[NewService] Failed to initialize S3 client: %v. Fallback to NULL.\n", err)
+			saveMedia = "NULL"
+		} else {
+			fmt.Println("[NewService] S3 Client initialized successfully")
+		}
+	}
+
+	fmt.Printf("[NewService] WebhookURL: %s, WebhookType: %s, SaveMedia: %s\n", webhookURL, wt, saveMedia)
+
 	return &Service{
 		Store:            s,
 		clientPool:       NewClientPool(poolCfg),
 		RejectionConfigs: make(map[string]RejectionConfig),
 		QRCodes:          make(map[string]string),
 		WebhookURL:       webhookURL,
+		WebhookType:      wt,
+		SaveMedia:        saveMedia,
+		S3Client:         s3Client,
+		S3Bucket:         s3Bucket,
 		workerPool:       NewWorkerPool(poolCfg.WorkerPoolSize),
 		httpClient:       NewHTTPClientPool(poolCfg.HTTPPoolSize),
 	}
@@ -235,6 +287,29 @@ func (s *Service) GetClient(token string) (*whatsmeow.Client, error) {
 	return client, nil
 }
 
+// cleanupSession performs full session cleanup for a token.
+// This purges whatsmeow session data, clears DB, removes from pool, and cleans QR cache.
+// Call this whenever a device is no longer usable and needs a fresh QR scan.
+func (s *Service) cleanupSession(token string, reason string) {
+	fmt.Printf("[CleanupSession] Token %s - Reason: %s. Purging session data...\n", token, reason)
+
+	// Step 1: Purge whatsmeow session data (encryption keys, identity, etc.)
+	s.Store.PurgeDeviceSession(token)
+
+	// Step 2: Clear JID/name in account_tokens (keep the token row)
+	s.Store.ClearTokenJID(token)
+
+	// Step 3: Remove client from pool (disconnects if still connected)
+	s.clientPool.Remove(token)
+
+	// Step 4: Clean up QR cache
+	s.mu.Lock()
+	delete(s.QRCodes, token)
+	s.mu.Unlock()
+
+	fmt.Printf("[CleanupSession] Token %s fully cleaned up. Ready for fresh QR scan.\n", token)
+}
+
 // handleEvent processes WhatsApp events using the worker pool
 func (s *Service) handleEvent(token string, client *whatsmeow.Client, evt interface{}) {
 	switch v := evt.(type) {
@@ -274,14 +349,45 @@ func (s *Service) handleEvent(token string, client *whatsmeow.Client, evt interf
 
 	case *events.LoggedOut:
 		s.workerPool.Submit(func() {
-			fmt.Printf("Token %s logged out. Clearing session.\n", token)
-			s.Store.ClearTokenJID(token)
-			s.clientPool.Remove(token)
+			reason := fmt.Sprintf("LoggedOut event (reason: %d)", v.Reason)
+			s.cleanupSession(token, reason)
+		})
 
-			// Also remove from QR codes if any
-			s.mu.Lock()
-			delete(s.QRCodes, token)
-			s.mu.Unlock()
+	case *events.TemporaryBan:
+		s.workerPool.Submit(func() {
+			reason := fmt.Sprintf("TemporaryBan (code: %v, expire: %v)", v.Code, v.Expire)
+			fmt.Printf("[Event] Token %s: %s\n", token, reason)
+			// Temporary ban means the session is unusable.
+			// Purge everything so user can re-scan with a fresh session after ban expires.
+			s.cleanupSession(token, reason)
+		})
+
+	case *events.StreamError:
+		s.workerPool.Submit(func() {
+			reason := fmt.Sprintf("StreamError (code: %s)", v.Code)
+			fmt.Printf("[Event] Token %s: %s\n", token, reason)
+			// Stream errors indicate the session is broken.
+			// Clean up so the device can be re-scanned.
+			s.cleanupSession(token, reason)
+		})
+
+	case *events.ClientOutdated:
+		s.workerPool.Submit(func() {
+			reason := "ClientOutdated - WhatsApp server rejected connection, client version too old"
+			fmt.Printf("[Event] Token %s: %s\n", token, reason)
+			s.cleanupSession(token, reason)
+		})
+
+	case *events.Disconnected:
+		s.workerPool.Submit(func() {
+			fmt.Printf("[Event] Token %s: Disconnected from WhatsApp\n", token)
+			// Don't purge session for normal disconnects (network issues, etc.)
+			// The periodic check will handle reconnection.
+			// But if the device no longer has a valid session, clean up the DB status.
+			if client.Store.ID == nil {
+				fmt.Printf("[Event] Token %s: Disconnected with no valid session. Cleaning up.\n", token)
+				s.Store.ClearTokenJID(token)
+			}
 		})
 	}
 }
@@ -318,6 +424,12 @@ func (s *Service) handleConnected(token string, client *whatsmeow.Client) {
 // handleMessage processes incoming messages
 func (s *Service) handleMessage(token string, client *whatsmeow.Client, v *events.Message) {
 	if v.Info.IsFromMe {
+		// If FromMe, check if we want to send webhook (omnichannel)
+		fmt.Printf("[handleMessage] Outgoing message detected. WebhookType: %s\n", s.WebhookType)
+		if s.WebhookType == "all" {
+			fmt.Println("[handleMessage] Sending outgoing webhook event...")
+			s.handleWebhookEvent(token, v)
+		}
 		return
 	}
 
@@ -458,6 +570,13 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 		return
 	}
 
+	// Filter status broadcasts
+	if evtV, ok := evt.(*events.Message); ok {
+		if evtV.Info.Chat.String() == "status@broadcast" {
+			return
+		}
+	}
+
 	var payload map[string]interface{}
 
 	switch v := evt.(type) {
@@ -532,6 +651,19 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 			"type":      msgType,
 			"update_at": time.Now().Format("2006-01-02 15:04:05"),
 			"message":   msgText,
+		}
+
+		// Process Media if exists
+		// Get client for download
+		client, _ := s.GetClient(token)
+		if client != nil {
+			mediaURL, err := s.processMedia(token, client, v)
+			if err != nil {
+				fmt.Printf("[Webhook] Failed to process media: %v\n", err)
+			}
+			if mediaURL != "" {
+				payload["media_url"] = mediaURL
+			}
 		}
 
 	case *events.Receipt:
@@ -794,19 +926,225 @@ func (s *Service) PairPhone(token, phone string) (string, error) {
 
 	time.Sleep(1 * time.Second)
 
+	// Browser name moved to beginning of function
+
+	// Browser name
 	browserName := os.Getenv("DEVICE_NAME")
 	if browserName == "" {
 		browserName = "Chrome"
 	}
 
-	fmt.Printf("[PairPhone] Phone: %s, Browser: %s\n", phone, browserName)
+	phone = NormalizePhone(phone)
 
-	code, err := client.PairPhone(context.Background(), phone, true, whatsmeow.PairClientChrome, browserName)
+	// WhatsApp requires a specific format for the client display name in PairPhone (e.g. "Browser (OS)").
+	// Using a known format like "Chrome (Windows)" avoids the 400 bad-request error.
+	clientDisplayName := "Chrome (Windows)"
+	if browserName != "Chrome" && browserName != "" {
+		clientDisplayName = browserName + " (Windows)"
+	}
+
+	fmt.Printf("[PairPhone] Phone: %s, Browser: %s\n", phone, clientDisplayName)
+
+	code, err := client.PairPhone(context.Background(), phone, true, whatsmeow.PairClientChrome, clientDisplayName)
 	if err != nil {
 		return "", err
 	}
 
 	return code, nil
+}
+
+// processMedia downloads and saves media based on SAVE_MEDIA config
+func (s *Service) processMedia(token string, client *whatsmeow.Client, evt *events.Message) (string, error) {
+	if s.SaveMedia == "NULL" {
+		return "", nil
+	}
+
+	var data []byte
+	var err error
+	var ext string
+	var mimeType string
+
+	msg := evt.Message
+
+	if img := msg.GetImageMessage(); img != nil {
+		data, err = client.Download(context.Background(), img)
+		ext = "jpg"
+		mimeType = "image/jpeg"
+
+		// Compress Image
+		if len(data) > 100*1024 { // Only compress if > 100KB
+			compressedData, errCompress := s.compressImage(data)
+			if errCompress == nil {
+				data = compressedData
+				fmt.Printf("[processMedia] Image compressed. Size: %d bytes\n", len(data))
+			} else {
+				fmt.Printf("[processMedia] Failed to compress image: %v\n", errCompress)
+			}
+		}
+	} else if vid := msg.GetVideoMessage(); vid != nil {
+		data, err = client.Download(context.Background(), vid)
+		ext = "mp4"
+		mimeType = "video/mp4"
+	} else if aud := msg.GetAudioMessage(); aud != nil {
+		data, err = client.Download(context.Background(), aud)
+		ext = "ogg"
+		mimeType = "audio/ogg"
+	} else if doc := msg.GetDocumentMessage(); doc != nil {
+		data, err = client.Download(context.Background(), doc)
+		ext = "" // Use filename extension if possible
+		mimeType = doc.GetMimetype()
+
+		// Try to get extension from filename
+		if doc.FileName != nil {
+			parts := strings.Split(*doc.FileName, ".")
+			if len(parts) > 1 {
+				ext = parts[len(parts)-1]
+			}
+		}
+		if ext == "" {
+			// Fallback: simple mapping
+			switch mimeType {
+			case "application/pdf":
+				ext = "pdf"
+			case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+				ext = "xlsx"
+			case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+				ext = "docx"
+			}
+		}
+
+	} else if stk := msg.GetStickerMessage(); stk != nil {
+		data, err = client.Download(context.Background(), stk)
+		ext = "webp"
+		mimeType = "image/webp"
+	} else {
+		return "", nil
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("failed to download media: %w", err)
+	}
+
+	if ext == "" {
+		ext = "bin"
+	}
+
+	fileName := fmt.Sprintf("%s.%s", evt.Info.ID, ext)
+
+	// Create current date folder: YYYY-MM-DD
+	currentDate := time.Now().Format("2006-01-02")
+
+	if s.SaveMedia == "LOCAL" {
+		// Folder structure: media/{token}/{date}/
+		dirPath := filepath.Join("media", token, currentDate)
+		if err := os.MkdirAll(dirPath, 0755); err != nil {
+			return "", fmt.Errorf("failed to create directory: %w", err)
+		}
+
+		filePath := filepath.Join(dirPath, fileName)
+		if err := os.WriteFile(filePath, data, 0644); err != nil {
+			return "", fmt.Errorf("failed to write file: %w", err)
+		}
+
+		// Return full URL
+		// Assuming static file server maps /media to ./media
+		// URL format: {APP_URL}/media/{token}/{date}/{filename}
+
+		baseURL := os.Getenv("APP_URL")
+		if baseURL == "" {
+			baseURL = "http://localhost:8080"
+		}
+
+		// Remove trailing slash if present
+		baseURL = strings.TrimRight(baseURL, "/")
+
+		return fmt.Sprintf("%s/media/%s/%s/%s", baseURL, token, currentDate, fileName), nil
+	} else if s.SaveMedia == "S3" {
+		if s.S3Client == nil {
+			return "", fmt.Errorf("S3 client not initialized")
+		}
+
+		objectName := fmt.Sprintf("%s/%s/%s", token, currentDate, fileName)
+		reader := bytes.NewReader(data)
+		objectSize := int64(len(data))
+
+		_, err := s.S3Client.PutObject(context.Background(), s.S3Bucket, objectName, reader, objectSize, minio.PutObjectOptions{
+			ContentType: mimeType,
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to upload to S3: %w", err)
+		}
+
+		// Generate Public URL
+		// Assuming public bucket or generate presigned URL
+		// For now, let's construct the URL based on endpoint and bucket
+		// Format: https://{endpoint}/{bucket}/{objectName} (path style)
+		// Or https://{bucket}.{endpoint}/{objectName} (virtual host style)
+
+		// Simple implementation: Use the S3_ENDPOINT as base
+		endpoint := os.Getenv("S3_ENDPOINT")
+		useSSL := os.Getenv("S3_USE_SSL") == "true"
+		protocol := "http"
+		if useSSL {
+			protocol = "https"
+		}
+
+		return fmt.Sprintf("%s://%s/%s/%s", protocol, endpoint, s.S3Bucket, objectName), nil
+	}
+
+	return "", nil
+}
+
+// compressImage resizes and compresses image to be under 100KB
+func (s *Service) compressImage(data []byte) ([]byte, error) {
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode image: %w", err)
+	}
+
+	// Initial quality
+	quality := 80
+	width := uint(img.Bounds().Dx())
+
+	// Max initial width
+	if width > 1280 {
+		width = 1280
+		img = resize.Resize(width, 0, img, resize.Lanczos3)
+	}
+
+	var buf bytes.Buffer
+	err = jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality})
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode initial jpeg: %w", err)
+	}
+
+	// Iteratively reduce quality/size until < 100KB or quality too low
+	for buf.Len() > 100*1024 && quality > 20 {
+		// Reduce quality
+		quality -= 10
+		if quality < 20 {
+			quality = 20
+		}
+
+		// If still too big and quality is low, resize
+		if quality < 50 && width > 600 {
+			width = uint(float64(width) * 0.8)
+			img = resize.Resize(width, 0, img, resize.Lanczos3)
+		}
+
+		buf.Reset()
+		err = jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality})
+		if err != nil {
+			return nil, fmt.Errorf("failed to re-encode jpeg: %w", err)
+		}
+
+		if quality == 20 && buf.Len() > 100*1024 {
+			// Cannot compress further effectively
+			break
+		}
+	}
+
+	return buf.Bytes(), nil
 }
 
 func (s *Service) GetContacts(token string) (map[types.JID]types.ContactInfo, error) {
@@ -933,19 +1271,16 @@ func (s *Service) Logout(token string) error {
 		return fmt.Errorf("not logged in")
 	}
 
-	if err := client.Logout(context.Background()); err != nil {
-		return fmt.Errorf("failed to logout: %w", err)
+	// Try to logout from WhatsApp servers first
+	err = client.Logout(context.Background())
+	if err != nil {
+		// Even if WhatsApp logout fails (e.g. already banned/disconnected),
+		// we still want to clean up local session data
+		fmt.Printf("[Logout] WhatsApp logout failed for %s: %v. Proceeding with local cleanup.\n", token, err)
 	}
 
-	s.Store.ClearTokenJID(token)
-
-	// Remove from pool
-	s.clientPool.Remove(token)
-
-	s.mu.Lock()
-	delete(s.QRCodes, token)
-	s.mu.Unlock()
-
+	// Full cleanup: purge session, clear DB, remove from pool
+	s.cleanupSession(token, "Manual logout")
 	return nil
 }
 

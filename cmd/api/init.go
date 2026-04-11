@@ -24,6 +24,14 @@ APIKEY=your-api-key-here
 # Kosongkan jika tidak digunakan
 WEBHOOK=
 
+# Base URL aplikasi (untuk local media URL)
+# Contoh: https://api.example.com atau http://localhost:8080
+APP_URL=http://localhost:8080
+
+# Webhook Type: in (masuk saja) atau all (masuk & keluar/omnichannel)
+# Default: in
+WEBHOOKTYPE=in
+
 # Nama device yang muncul di WhatsApp (Linked Devices)
 # Default: ApiWago
 DEVICE_NAME=ApiWago
@@ -87,6 +95,24 @@ RATE_LIMIT_PER_TOKEN=60
 # HTTP connection pool size untuk download/upload media
 # Default: 100
 HTTP_POOL_SIZE=100
+
+# =====================
+# Media Configuration
+# =====================
+
+# Save Media: NULL (default), LOCAL, S3
+# NULL: Tidak menyimpan media
+# LOCAL: Simpan di folder ./media
+# S3: Upload ke S3 Compatible Storage
+SAVE_MEDIA=NULL
+
+# S3 Configuration (Wajib jika SAVE_MEDIA=S3)
+S3_ENDPOINT=files.example.com
+S3_ACCESS_KEY=your-access-key
+S3_SECRET_KEY=your-secret-key
+S3_BUCKET=whatsapp-media
+S3_REGION=us-east-1
+S3_USE_SSL=true
 `
 
 // runInit membuat file .env dengan default values
@@ -120,6 +146,9 @@ func runInit() error {
 	fmt.Println("   - PORT           : Port HTTP server (default: 8080)")
 	fmt.Println("   - APIKEY         : API Key untuk autentikasi")
 	fmt.Println("   - WEBHOOK        : URL webhook untuk pesan masuk")
+	fmt.Println("   - APP_URL        : Base URL aplikasi (untuk media link)")
+	fmt.Println("   - WEBHOOKTYPE    : Tipe webhook (in/all) untuk omnichannel")
+	fmt.Println("   - WEBHOOKTYPE    : Tipe webhook (in/all) untuk omnichannel")
 	fmt.Println("   - DEVICE_NAME    : Nama device di WhatsApp (default: ApiWago)")
 	fmt.Println("   - SERVICE_NAME   : Nama Windows Service (default: apiwago)")
 	fmt.Println("")
@@ -138,6 +167,13 @@ func runInit() error {
 	fmt.Println("   - CLIENT_IDLE_TIMEOUT : Idle timeout dalam menit (default: 30)")
 	fmt.Println("   - WORKER_POOL_SIZE    : Worker goroutines (default: 100)")
 	fmt.Println("   - HTTP_POOL_SIZE      : HTTP connections (default: 100)")
+	fmt.Println("")
+	fmt.Println("   Konfigurasi Media:")
+	fmt.Println("   - SAVE_MEDIA          : NULL, LOCAL, atau S3 (default: NULL)")
+	fmt.Println("   - S3_ENDPOINT         : Endpoint S3 (jika SAVE_MEDIA=S3)")
+	fmt.Println("   - S3_ACCESS_KEY       : Access Key ID S3")
+	fmt.Println("   - S3_SECRET_KEY       : Secret Access Key S3")
+	fmt.Println("   - S3_BUCKET           : Nama Bucket S3")
 
 	return nil
 }

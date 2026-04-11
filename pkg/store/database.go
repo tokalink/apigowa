@@ -191,3 +191,32 @@ func (s *Store) IsSetupDetails() (bool, error) {
 func (s *Store) GetLoggedInTokens() ([]string, error) {
 	return s.Driver.GetLoggedInTokens()
 }
+
+// PurgeDeviceSession deletes all whatsmeow session data for a token's device.
+// This removes encryption keys, identity, and all related session data from the
+// whatsmeow SQLite container, ensuring the next login starts completely fresh.
+// The token row in account_tokens is preserved (only JID/name are cleared separately).
+func (s *Store) PurgeDeviceSession(token string) {
+	jid, err := s.Driver.GetJID(token)
+	if err != nil || jid == types.EmptyJID {
+		fmt.Printf("[PurgeDeviceSession] No JID found for token %s (already clean)\n", token)
+		return
+	}
+
+	device, err := s.Container.GetDevice(context.Background(), jid)
+	if err != nil {
+		fmt.Printf("[PurgeDeviceSession] Failed to get device for JID %s: %v\n", jid, err)
+		return
+	}
+	if device == nil {
+		fmt.Printf("[PurgeDeviceSession] No device found in container for JID %s\n", jid)
+		return
+	}
+
+	err = s.Container.DeleteDevice(context.Background(), device)
+	if err != nil {
+		fmt.Printf("[PurgeDeviceSession] Failed to delete device from container for JID %s: %v\n", jid, err)
+	} else {
+		fmt.Printf("[PurgeDeviceSession] Successfully purged session data for JID %s (token %s)\n", jid, token)
+	}
+}
