@@ -93,8 +93,6 @@ func NewDriver(cfg *DBConfig) (DBDriver, error) {
 	switch cfg.Driver {
 	case "sqlite":
 		return NewSQLiteDriver(cfg.FilePath)
-	case "mysql":
-		return NewMySQLDriver(cfg)
 	case "postgres":
 		return NewPostgresDriver(cfg)
 	default:

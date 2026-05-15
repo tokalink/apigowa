@@ -592,6 +592,9 @@ func (s *Server) RegisterRoutes(r *gin.Engine) {
 		api.POST("/logout", s.LogoutHandler)
 		api.POST("/reconnect", s.ReconnectHandler)
 		api.Any("/status", s.StatusHandler) // Support GET & POST
+		api.POST("/profile/status", s.SetStatusMessageHandler)
+		api.POST("/check-number", s.CheckNumberHandler)
+		api.POST("/presence", s.SendPresenceHandler)
 
 		// Admin Routes
 		api.POST("/setup", s.SetupHandler)
@@ -672,4 +675,85 @@ func (s *Server) UpdateWebhookHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "updated", "url": req.URL})
+}
+
+type SetStatusMessageRequest struct {
+	Token  FlexString `json:"token"`
+	Status string     `json:"status"`
+}
+
+func (s *Server) SetStatusMessageHandler(c *gin.Context) {
+	var req SetStatusMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+		return
+	}
+
+	if err := s.Service.SetStatusMessage(string(req.Token), req.Status); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": true, "message": "status updated"})
+}
+
+type CheckNumberRequest struct {
+	Token FlexString `json:"token"`
+	Phone string     `json:"phone"`
+}
+
+func (s *Server) CheckNumberHandler(c *gin.Context) {
+	var req CheckNumberRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Token == "" || req.Phone == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token and phone are required"})
+		return
+	}
+
+	isRegistered, jid, err := s.Service.CheckNumber(string(req.Token), req.Phone)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":        true,
+		"is_registered": isRegistered,
+		"jid":           jid,
+	})
+}
+
+type SendPresenceRequest struct {
+	Token FlexString `json:"token"`
+	Phone string     `json:"phone"`
+	State string     `json:"state"` // composing, recording, paused
+}
+
+func (s *Server) SendPresenceHandler(c *gin.Context) {
+	var req SendPresenceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Token == "" || req.Phone == "" || req.State == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token, phone, and state are required"})
+		return
+	}
+
+	if err := s.Service.SendPresence(string(req.Token), req.Phone, req.State); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": true, "message": "presence sent"})
 }

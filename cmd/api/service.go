@@ -95,7 +95,7 @@ func (p *program) run() {
 
 	// Serve Frontend
 	r.GET("/", func(c *gin.Context) {
-		index, err := web.GetIndex()
+		index, err := web.GetIndex(version)
 		if err != nil {
 			c.String(http.StatusInternalServerError, err.Error())
 			return

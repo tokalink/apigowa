@@ -812,12 +812,19 @@ func NormalizePhone(phone string) string {
 	// Remove ALL non-numeric characters
 	phone = phoneCleanRegex.ReplaceAllString(phone, "")
 
+	// Handle case where someone put 00 prefix for international (e.g., 0041)
+	if strings.HasPrefix(phone, "00") && len(phone) > 2 {
+		phone = phone[2:]
+	}
+
 	// Convert 08 prefix to 628 (Indonesian format)
 	if strings.HasPrefix(phone, "08") {
 		phone = "62" + phone[1:]
 	}
 
 	// Handle case where someone put 0628 or similar (after removing +)
+	// But only if it's not a valid 0-prefixed international number (which we can't be sure about,
+	// but usually leading 0 followed by digits is a local number format)
 	if strings.HasPrefix(phone, "0") && len(phone) > 1 {
 		phone = phone[1:]
 	}
@@ -850,6 +857,7 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 			return "", fmt.Errorf("phone number too short (minimum 5 digits)")
 		}
 
+		fmt.Print("Gooooo=>>>")
 		to = normalized + "@s.whatsapp.net"
 	}
 	recipient, err := types.ParseJID(to)
@@ -857,16 +865,37 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 		return "", fmt.Errorf("invalid recipient JID: %w", err)
 	}
 
-	// Check if registered on WhatsApp (skip for groups)
+	// Check if registered on WhatsApp (skip for groups and broadcast)
 	// Can be disabled with SKIP_ISONWHATSAPP=true in .env
 	skipCheck := os.Getenv("SKIP_ISONWHATSAPP") == "true"
-	if recipient.Server != "g.us" && !skipCheck {
+	if recipient.Server != "g.us" && recipient.Server != "broadcast" && !skipCheck {
 		// For IsOnWhatsApp, we need to send number WITHOUT country code
-		// because WhatsApp will add country code automatically based on account region
-		// EDITED: Actually we should send FULL INT'L NUMBER to be safe and unambiguous
+		// if it matches the sender's country code to avoid doubling.
 		phoneToCheck := recipient.User
 
-		fmt.Printf("[SendMessage] IsOnWhatsApp checking: %s (from %s)\n", phoneToCheck, recipient.User)
+		// Get sender country code (simple heuristic for Indonesia)
+		senderJID := client.Store.ID
+		senderCC := "62" // default
+		if senderJID != nil {
+			if !strings.HasPrefix(senderJID.User, "62") && len(senderJID.User) >= 2 {
+				// If sender is not Indonesian, maybe it's another country
+				// We can try to guess or just use 62 as a safe default for Indonesian users
+				// For now, let's see if sender starts with 62
+			}
+			if senderJID != nil && strings.HasPrefix(senderJID.User, "62") {
+				senderCC = "62"
+			} else if senderJID != nil && len(senderJID.User) >= 2 {
+				// Generic sender CC detection (first 2 digits)
+				senderCC = senderJID.User[:2]
+			}
+		}
+
+		// Only trim CC if it matches the sender's CC
+		if strings.HasPrefix(phoneToCheck, senderCC) && len(phoneToCheck) <= 13 {
+			phoneToCheck = strings.TrimPrefix(phoneToCheck, senderCC)
+		}
+
+		fmt.Printf("[SendMessage] >==> IsOnWhatsApp checking: %s (original: %s, senderCC: %s)\n", phoneToCheck, recipient.User, senderCC)
 
 		// Use 30 second timeout for IsOnWhatsApp check
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -877,10 +906,23 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 			// Log the error but don't fail - try to send anyway
 			fmt.Printf("[SendMessage] IsOnWhatsApp check failed for %s: %v (akan tetap coba kirim)\n", phoneToCheck, err)
 		} else if len(isOnWhatsApp) > 0 {
+			result := isOnWhatsApp[0]
 			fmt.Printf("[SendMessage] IsOnWhatsApp result for %s: IsIn=%v, JID=%s\n",
-				phoneToCheck, isOnWhatsApp[0].IsIn, isOnWhatsApp[0].JID.String())
-			if !isOnWhatsApp[0].IsIn {
-				return "", ErrUserNotRegistered
+				phoneToCheck, result.IsIn, result.JID.String())
+
+			if !result.IsIn {
+				// HEURISTIC: If result is False but the returned JID starts with double country code
+				// (e.g. 6241...), it's a false negative due to server mangling.
+				if senderCC != "" && strings.HasPrefix(result.JID.User, senderCC) && !strings.HasPrefix(recipient.User, senderCC) {
+					fmt.Printf("[SendMessage] Detected false negative for international number (mangled JID: %s). Proceeding anyway.\n", result.JID.String())
+				} else {
+					return "", ErrUserNotRegistered
+				}
+			} else {
+				// Update recipient to the true JID returned by WhatsApp
+				// This prevents 400 errors for numbers that have different canonical forms
+				// (e.g. Brazil's 9 digit or Mexico's 1 prefix)
+				recipient = result.JID
 			}
 		} else {
 			fmt.Printf("[SendMessage] IsOnWhatsApp returned empty result for %s (treating as not registered)\n", phoneToCheck)
@@ -890,6 +932,16 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 
 	msg := &waE2E.Message{
 		Conversation: proto.String(text),
+	}
+
+	if recipient.Server == "broadcast" {
+		// Text statuses require ExtendedTextMessage and a background color
+		msg = &waE2E.Message{
+			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text:           proto.String(text),
+				BackgroundArgb: proto.Uint32(0xFF25D366), // Default WhatsApp Green background
+			},
+		}
 	}
 
 	// Send with timeout
@@ -1329,18 +1381,30 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 		return "", fmt.Errorf("invalid recipient JID: %w", err)
 	}
 
-	// Check if registered on WhatsApp (skip for groups)
+	// Check if registered on WhatsApp (skip for groups and broadcast)
 	skipCheck := os.Getenv("SKIP_ISONWHATSAPP") == "true"
-	if recipient.Server != "g.us" && !skipCheck {
+	if recipient.Server != "g.us" && recipient.Server != "broadcast" && !skipCheck {
 		// For IsOnWhatsApp, we need to send number WITHOUT country code
-		// because WhatsApp will add country code automatically based on account region
+		// if it matches the sender's country code to avoid doubling.
 		phoneToCheck := recipient.User
-		// Strip Indonesian country code (62) if present to avoid double 62
-		if strings.HasPrefix(phoneToCheck, "62") && len(phoneToCheck) > 2 {
-			phoneToCheck = phoneToCheck[2:]
+
+		// Get sender country code (simple heuristic for Indonesia)
+		senderJID := client.Store.ID
+		senderCC := "62" // default
+		if senderJID != nil {
+			if strings.HasPrefix(senderJID.User, "62") {
+				senderCC = "62"
+			} else if len(senderJID.User) >= 2 {
+				senderCC = senderJID.User[:2]
+			}
 		}
 
-		fmt.Printf("[SendMedia] IsOnWhatsApp checking: %s (from %s)\n", phoneToCheck, recipient.User)
+		// Only trim CC if it matches the sender's CC
+		if strings.HasPrefix(phoneToCheck, senderCC) && len(phoneToCheck) <= 13 {
+			phoneToCheck = strings.TrimPrefix(phoneToCheck, senderCC)
+		}
+
+		fmt.Printf("[SendMedia] IsOnWhatsApp checking: %s (from %s, senderCC: %s)\n", phoneToCheck, recipient.User, senderCC)
 
 		// Use 30 second timeout for IsOnWhatsApp check
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1351,10 +1415,21 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 			// Log the error but don't fail - try to send anyway
 			fmt.Printf("[SendMedia] IsOnWhatsApp check failed for %s: %v (akan tetap coba kirim)\n", phoneToCheck, err)
 		} else if len(isOnWhatsApp) > 0 {
+			result := isOnWhatsApp[0]
 			fmt.Printf("[SendMedia] IsOnWhatsApp result for %s: IsIn=%v, JID=%s\n",
-				phoneToCheck, isOnWhatsApp[0].IsIn, isOnWhatsApp[0].JID.String())
-			if !isOnWhatsApp[0].IsIn {
-				return "", ErrUserNotRegistered
+				phoneToCheck, result.IsIn, result.JID.String())
+
+			if !result.IsIn {
+				// HEURISTIC: If result is False but the returned JID starts with double country code
+				// (e.g. 6241...), it's a false negative due to server mangling.
+				if senderCC != "" && strings.HasPrefix(result.JID.User, senderCC) && !strings.HasPrefix(recipient.User, senderCC) {
+					fmt.Printf("[SendMedia] Detected false negative for international number (mangled JID: %s). Proceeding anyway.\n", result.JID.String())
+				} else {
+					return "", ErrUserNotRegistered
+				}
+			} else {
+				// Update recipient to the true JID returned by WhatsApp
+				recipient = result.JID
 			}
 		} else {
 			fmt.Printf("[SendMedia] IsOnWhatsApp returned empty result for %s (akan tetap coba kirim)\n", phoneToCheck)
@@ -1433,4 +1508,85 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 // GetClientCount returns the number of connected clients (for monitoring)
 func (s *Service) GetClientCount() int {
 	return s.clientPool.Count()
+}
+
+// SetStatusMessage updates the user's about/status text
+func (s *Service) SetStatusMessage(token, status string) error {
+	client, err := s.GetClient(token)
+	if err != nil {
+		return err
+	}
+	if !client.IsConnected() {
+		return fmt.Errorf("client not connected")
+	}
+
+	return client.SetStatusMessage(context.Background(), status)
+}
+
+
+// CheckNumber checks if a number is registered on WhatsApp
+func (s *Service) CheckNumber(token, phone string) (bool, string, error) {
+	client, err := s.GetClient(token)
+	if err != nil {
+		return false, "", err
+	}
+	if !client.IsConnected() {
+		return false, "", fmt.Errorf("client not connected")
+	}
+
+	phone = NormalizePhone(phone)
+	if phone == "" {
+		return false, "", fmt.Errorf("invalid phone number")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	res, err := client.IsOnWhatsApp(ctx, []string{phone})
+	if err != nil {
+		return false, "", err
+	}
+
+	if len(res) > 0 {
+		return res[0].IsIn, res[0].JID.String(), nil
+	}
+
+	return false, "", nil
+}
+
+// SendPresence sends typing or recording presence to a chat
+func (s *Service) SendPresence(token, to, state string) error {
+	client, err := s.GetClient(token)
+	if err != nil {
+		return err
+	}
+	if !client.IsConnected() {
+		return fmt.Errorf("client not connected")
+	}
+
+	// Normalize phone number if not already a JID
+	if !strings.Contains(to, "@") {
+		to = NormalizePhone(to) + "@s.whatsapp.net"
+	}
+	recipient, err := types.ParseJID(to)
+	if err != nil {
+		return fmt.Errorf("invalid recipient JID: %w", err)
+	}
+
+	var chatState types.ChatPresence
+	var chatMedia types.ChatPresenceMedia = types.ChatPresenceMediaText
+
+	switch strings.ToLower(state) {
+	case "composing", "typing":
+		chatState = types.ChatPresenceComposing
+	case "recording", "audio":
+		chatState = types.ChatPresenceComposing
+		chatMedia = types.ChatPresenceMediaAudio
+	case "paused":
+		chatState = types.ChatPresencePaused
+	default:
+		return fmt.Errorf("invalid presence state")
+	}
+
+	return client.SendChatPresence(context.Background(), recipient, chatState, chatMedia)
 }

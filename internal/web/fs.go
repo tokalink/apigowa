@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"embed"
 	"io/fs"
 	"net/http"
@@ -17,6 +18,10 @@ func GetFileSystem() http.FileSystem {
 	return http.FS(fsys)
 }
 
-func GetIndex() ([]byte, error) {
-	return Content.ReadFile("templates/index.html")
+func GetIndex(version string) ([]byte, error) {
+	data, err := Content.ReadFile("templates/index.html")
+	if err != nil {
+		return nil, err
+	}
+	return bytes.Replace(data, []byte("{{VERSION}}"), []byte(version), -1), nil
 }

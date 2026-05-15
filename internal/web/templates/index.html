@@ -450,7 +450,7 @@
                 <label>Username</label>
                 <input type="text" id="auth-user" placeholder="Enter username">
                 <label>Password</label>
-                <input type="password" id="auth-pass" placeholder="Enter password">
+                <input type="password" id="auth-pass" placeholder="Enter password" onkeydown="if(event.key==='Enter') performAuth()">
                 <button id="auth-btn" class="w-full" onclick="performAuth()">Login</button>
             </div>
         </div>
@@ -464,7 +464,7 @@
             <!-- Top Bar -->
             <div class="card">
                 <div class="flex justify-between items-center mb-4 header-flex">
-                    <h2 style="margin:0">Dashboard</h2>
+                    <h2 style="margin:0">Dashboard <span style="font-size: 12px; color: var(--gray); font-weight: normal;">v{{VERSION}}</span></h2>
                     <div class="flex gap-2 header-buttons">
                         <button class="secondary" onclick="showDocs()">Documentation</button>
                         <button class="secondary" onclick="logoutAdmin()"
@@ -581,13 +581,27 @@
                         <div class="tab active" onclick="switchTab('send')">Send Message</div>
                         <div class="tab" onclick="switchTab('contacts')">Contacts</div>
                         <div class="tab" onclick="switchTab('groups')">Groups</div>
+                        <div class="tab" onclick="switchTab('profile')">Profile</div>
+                        <div class="tab" onclick="switchTab('utilities')">Utilities</div>
                     </div>
 
                     <!-- Send Tab -->
                     <div id="tab-send">
                         <label>Recipient (Phone / JID)</label>
                         <input type="text" id="to" placeholder="e.g. 628123456789">
-                        <label>Message</label>
+                        
+                        <div class="flex gap-4">
+                            <div style="flex: 1;">
+                                <label>Media URL (Optional)</label>
+                                <input type="text" id="file_url" placeholder="https://example.com/image.jpg">
+                            </div>
+                            <div style="flex: 1;">
+                                <label>File Name (Optional)</label>
+                                <input type="text" id="file_name" placeholder="image.jpg">
+                            </div>
+                        </div>
+
+                        <label>Message (Caption)</label>
                         <textarea id="message" rows="6" placeholder="Type your message here..."></textarea>
 
                         <div class="flex justify-between items-center">
@@ -615,6 +629,53 @@
                         </div>
                         <div class="list-container" style="height: 500px;">
                             <div id="group-list"></div>
+                        </div>
+                    </div>
+
+                    <!-- Profile Tab -->
+                    <div id="tab-profile" class="hidden">
+                        <div class="mb-4">
+                            <h3>Profile & Status</h3>
+                            <p style="font-size:13px; color:var(--gray);">Update WhatsApp profile status.</p>
+                        </div>
+                        <label>Status Message (About)</label>
+                        <input type="text" id="profile-status" placeholder="Available">
+                        <div class="flex justify-between items-center mb-4">
+                            <button onclick="updateStatusMessage()">Update Status</button>
+                            <div id="profile-status-result"></div>
+                        </div>
+                    </div>
+
+                    <!-- Utilities Tab -->
+                    <div id="tab-utilities" class="hidden">
+                        <div class="mb-4">
+                            <h3>Check Number</h3>
+                            <p style="font-size:13px; color:var(--gray);">Check if a number is registered on WhatsApp.</p>
+                            <label>Phone Number</label>
+                            <input type="text" id="check-phone" placeholder="e.g. 628123456789">
+                            <div class="flex justify-between items-center">
+                                <button class="secondary" onclick="checkNumber()">Check</button>
+                                <div id="check-number-result"></div>
+                            </div>
+                        </div>
+                        
+                        <hr style="border: 0; border-top: 1px solid var(--border); margin: 20px 0;">
+
+                        <div class="mb-4">
+                            <h3>Send Presence</h3>
+                            <p style="font-size:13px; color:var(--gray);">Send typing or recording state to a chat.</p>
+                            <label>Recipient Phone / JID</label>
+                            <input type="text" id="presence-phone" placeholder="e.g. 628123456789">
+                            <label>Presence State</label>
+                            <select id="presence-state">
+                                <option value="composing">Typing (composing)</option>
+                                <option value="recording">Recording (audio)</option>
+                                <option value="paused">Paused (stop)</option>
+                            </select>
+                            <div class="flex justify-between items-center">
+                                <button class="secondary" onclick="sendPresence()">Send State</button>
+                                <div id="presence-result"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -754,6 +815,37 @@
                 <h3>13. Get Workspaces</h3>
                 <div><span class="method get">GET</span> /api/workspaces</div>
                 <p>Get list of all workspaces. (Protected)</p>
+
+                <h3>14. Update Status Message</h3>
+                <div><span class="method post">POST</span> /api/profile/status</div>
+                <p>Update the device's status message (about text). (Protected)</p>
+                <div class="code-block">
+                    {
+                    "token": "my-token",
+                    "status": "Busy"
+                    }
+                </div>
+
+                <h3>15. Check Number</h3>
+                <div><span class="method post">POST</span> /api/check-number</div>
+                <p>Check if a phone number is registered on WhatsApp. (Protected)</p>
+                <div class="code-block">
+                    {
+                    "token": "my-token",
+                    "phone": "628123456789"
+                    }
+                </div>
+
+                <h3>16. Send Presence</h3>
+                <div><span class="method post">POST</span> /api/presence</div>
+                <p>Send a typing or recording presence to a chat. (Protected)</p>
+                <div class="code-block">
+                    {
+                    "token": "my-token",
+                    "phone": "628123456789",
+                    "state": "composing" // composing, recording, paused
+                    }
+                </div>
             </div>
         </div>
 
@@ -1212,13 +1304,15 @@
         async function sendMessage() {
             const to = document.getElementById('to').value;
             const msg = document.getElementById('message').value;
+            const fileUrl = document.getElementById('file_url').value;
+            const fileName = document.getElementById('file_name').value;
             const status = document.getElementById('send-status');
 
             status.innerHTML = 'Sending...';
             const res = await fetch(`${API_BASE}/send`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: currentToken, phone: to, message: msg })
+                body: JSON.stringify({ token: currentToken, phone: to, message: msg, file_url: fileUrl, file_name: fileName })
             });
             const d = await res.json();
 
@@ -1274,6 +1368,77 @@
         function useContact(jid) {
             document.getElementById('to').value = jid;
             switchTab('send');
+        }
+
+        async function updateStatusMessage() {
+            const statusText = document.getElementById('profile-status').value;
+            const statusNode = document.getElementById('profile-status-result');
+            
+            if (!statusText) return alert("Enter status message");
+            statusNode.innerHTML = 'Updating...';
+            
+            try {
+                const res = await fetch(`${API_BASE}/profile/status`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'apikey': API_KEY },
+                    body: JSON.stringify({ token: currentToken, status: statusText })
+                });
+                const d = await res.json();
+                if (d.status) {
+                    statusNode.innerHTML = '<span style="color:var(--primary)">Updated!</span>';
+                } else {
+                    statusNode.innerHTML = `<span style="color:var(--danger)">${d.error}</span>`;
+                }
+            } catch (e) { statusNode.innerHTML = `<span style="color:var(--danger)">Error</span>`; }
+        }
+
+        async function checkNumber() {
+            const phone = document.getElementById('check-phone').value;
+            const resNode = document.getElementById('check-number-result');
+            
+            if (!phone) return alert("Enter phone number");
+            resNode.innerHTML = 'Checking...';
+            
+            try {
+                const res = await fetch(`${API_BASE}/check-number`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'apikey': API_KEY },
+                    body: JSON.stringify({ token: currentToken, phone })
+                });
+                const d = await res.json();
+                if (d.status) {
+                    if (d.is_registered) {
+                        resNode.innerHTML = `<span style="color:var(--primary)">✔ Registered (${d.jid})</span>`;
+                    } else {
+                        resNode.innerHTML = `<span style="color:var(--danger)">✖ Not Registered</span>`;
+                    }
+                } else {
+                    resNode.innerHTML = `<span style="color:var(--danger)">${d.error}</span>`;
+                }
+            } catch (e) { resNode.innerHTML = `<span style="color:var(--danger)">Error</span>`; }
+        }
+
+        async function sendPresence() {
+            const phone = document.getElementById('presence-phone').value;
+            const state = document.getElementById('presence-state').value;
+            const resNode = document.getElementById('presence-result');
+            
+            if (!phone) return alert("Enter recipient phone/JID");
+            resNode.innerHTML = 'Sending...';
+            
+            try {
+                const res = await fetch(`${API_BASE}/presence`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'apikey': API_KEY },
+                    body: JSON.stringify({ token: currentToken, phone, state })
+                });
+                const d = await res.json();
+                if (d.status) {
+                    resNode.innerHTML = `<span style="color:var(--primary)">✔ Sent!</span>`;
+                } else {
+                    resNode.innerHTML = `<span style="color:var(--danger)">${d.error}</span>`;
+                }
+            } catch (e) { resNode.innerHTML = `<span style="color:var(--danger)">Error</span>`; }
         }
 
         // Init

@@ -6,6 +6,9 @@ services:
       - .env
     ports:
       - "${API_PORT}:7900"
+    volumes:
+      - .env:/app/.env
+      - ./data:/app/data
     networks:
       - 1panel-network
 

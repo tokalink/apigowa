@@ -42,22 +42,26 @@ func NewStore(dbPath string) (*Store, error) {
 	store.SetOSInfo(deviceName, [3]uint32{2, 2450, 0})
 
 	// Create whatsmeow container
-	// For whatsmeow, we need to use SQLite regardless of main DB
-	// because whatsmeow stores encrypted session data
-	waDBPath := cfg.FilePath
-	if cfg.Driver != "sqlite" {
-		// Use a separate SQLite file for whatsmeow session data
-		waDBPath = "whatsmeow_sessions.db"
+	var container *sqlstore.Container
+	var waErr error
+	dbLog := waLog.Stdout("Database", "WARN", true)
+
+	if cfg.Driver == "postgres" {
+		// Postgres
+		dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
+			cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.DBName)
+		container, waErr = sqlstore.New(context.Background(), "postgres", dsn, dbLog)
+	} else {
+		// Default SQLite menggunakan path yang sama dengan database utama
+		container, waErr = sqlstore.New(context.Background(), "sqlite",
+			fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout=5000&_pragma=journal_mode=WAL", cfg.FilePath),
+			dbLog,
+		)
 	}
 
-	dbLog := waLog.Stdout("Database", "WARN", true)
-	container, err := sqlstore.New(context.Background(), "sqlite",
-		fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout=5000&_pragma=journal_mode=WAL", waDBPath),
-		dbLog,
-	)
-	if err != nil {
+	if waErr != nil {
 		driver.Close()
-		return nil, fmt.Errorf("failed to create whatsmeow container: %w", err)
+		return nil, fmt.Errorf("failed to create whatsmeow container: %w", waErr)
 	}
 
 	return &Store{

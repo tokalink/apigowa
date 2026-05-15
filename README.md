@@ -12,6 +12,7 @@ WhatsApp Multi-Device API Gateway - REST API untuk integrasi WhatsApp menggunaka
 - 🏷️ **Workspace** - Organisasi device berdasarkan group/team
 - 📞 **Auto Reject Call** - Tolak panggilan otomatis dengan pesan kustom
 - 🖼️ **Media Support** - Kirim gambar dan dokumen
+- 🛠️ **Smart Number Formatting** - Pencegahan double country-code (62) saat pengecekan nomor otomatis
 - ⚙️ **Service Mode** - Jalankan sebagai system service (Windows/Linux/macOS)
 
 ## 🚀 Quick Start
@@ -36,6 +37,15 @@ PORT=8080                  # Port HTTP server
 APIKEY=your-secure-key     # API Key untuk autentikasi
 WEBHOOK=                   # URL webhook (opsional)
 DEVICE_NAME=ApiWago        # Nama device di WhatsApp
+
+# Database Configuration (Hanya mendukung sqlite atau postgres)
+DB_DRIVER=sqlite           # sqlite / postgres (MySQL TIDAK DIDUKUNG)
+DB_PATH=store.db           # Path file SQLite
+# DB_HOST=localhost        # Host PostgreSQL (jika pakai postgres)
+# DB_PORT=5432             # Port PostgreSQL (jika pakai postgres)
+# DB_USER=postgres         # User PostgreSQL (jika pakai postgres)
+# DB_PASSWORD=secret       # Password PostgreSQL (jika pakai postgres)
+# DB_NAME=apiwago          # Nama DB PostgreSQL (jika pakai postgres)
 ```
 
 ### 4. Run
@@ -61,8 +71,17 @@ DEVICE_NAME=ApiWago        # Nama device di WhatsApp
 | `apiwago stop` | Stop service |
 | `apiwago restart` | Restart service |
 | `apiwago status` | Lihat status service |
+| `apiwago log` | Monitor log service (Khusus Linux) |
 | `apiwago version` | Lihat versi |
 | `apiwago help` | Bantuan |
+
+## 🗄️ Database Supported
+
+ApiWago menggunakan library `whatsmeow` versi terbaru yang **hanya mendukung** database berikut untuk kestabilan penyimpanan session enkripsi:
+1. **SQLite** (Default, direkomendasikan untuk pemakaian ringan - menengah)
+2. **PostgreSQL** (Direkomendasikan untuk pemakaian skala besar / enterprise)
+
+> ⚠️ **Catatan Penting:** Dukungan untuk **MySQL** telah dihapus secara resmi dari tingkat library karena masalah kompatibilitas dialect. Jangan gunakan MySQL/MariaDB.
 
 ## 🔌 API Endpoints
 

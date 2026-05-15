@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 
 	"apiwago/internal/api"
 	"apiwago/internal/web"
@@ -17,7 +19,7 @@ import (
 	"github.com/kardianos/service"
 )
 
-var version = "1.0.0"
+var version = "1.0.1(+0)"
 
 func main() {
 	// Cek apakah ada command argument
@@ -39,6 +41,12 @@ func main() {
 
 		case "version", "-v", "--version":
 			fmt.Printf("apiwago version %s\n", version)
+			return
+
+		case "log":
+			if err := runLogMonitor(); err != nil {
+				log.Fatalf("Error: %v", err)
+			}
 			return
 
 		case "help", "-h", "--help":
@@ -87,6 +95,7 @@ func printHelp() {
 	fmt.Println("  stop          Stop the running service")
 	fmt.Println("  restart       Restart the service")
 	fmt.Println("  status        Show service status")
+	fmt.Println("  log           Monitor service logs (Linux only)")
 	fmt.Println("  version       Show version information")
 	fmt.Println("  help          Show this help message")
 	fmt.Println("")
@@ -138,7 +147,7 @@ func runForeground() {
 
 	// Serve Frontend
 	r.GET("/", func(c *gin.Context) {
-		index, err := web.GetIndex()
+		index, err := web.GetIndex(version)
 		if err != nil {
 			c.String(http.StatusInternalServerError, err.Error())
 			return
@@ -165,4 +174,26 @@ func runForeground() {
 	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("Failed to run server: %v", err)
 	}
+}
+
+func runLogMonitor() error {
+	if runtime.GOOS != "linux" {
+		fmt.Println("Info: Perintah 'apiwago log' khusus untuk sistem operasi Linux (systemd).")
+		fmt.Println("Jika Anda menggunakan Windows, silakan periksa Event Viewer.")
+		return nil
+	}
+
+	if _, err := exec.LookPath("journalctl"); err != nil {
+		fmt.Println("Info: Perintah 'journalctl' tidak ditemukan di sistem ini.")
+		fmt.Println("Jika Anda menjalankan aplikasi ini di dalam Docker, fitur ini tidak diperlukan.")
+		fmt.Println("Gunakan perintah berikut di terminal server Anda untuk melihat log:")
+		fmt.Println("-> docker logs -f <nama_container>")
+		return nil
+	}
+
+	fmt.Println("Monitoring service logs... (Press Ctrl+C to stop)")
+	cmd := exec.Command("journalctl", "-u", "apiwago", "-f")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
