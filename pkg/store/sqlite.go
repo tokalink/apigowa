@@ -83,8 +83,24 @@ func (d *SQLiteDriver) Migrate() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
+		CREATE TABLE IF NOT EXISTS status_messages (
+			message_id TEXT PRIMARY KEY,
+			token TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS status_views (
+			message_id TEXT,
+			viewer_jid TEXT,
+			is_reply BOOLEAN DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (message_id, viewer_jid, is_reply)
+		);
+
 		CREATE INDEX IF NOT EXISTS idx_account_tokens_jid ON account_tokens(jid);
 		CREATE INDEX IF NOT EXISTS idx_account_tokens_workspace ON account_tokens(workspace);
+		CREATE INDEX IF NOT EXISTS idx_status_messages_token ON status_messages(token);
+		CREATE INDEX IF NOT EXISTS idx_status_views_msg_id ON status_views(message_id);
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
@@ -394,4 +410,88 @@ func (d *SQLiteDriver) GetLoggedInTokens() ([]string, error) {
 		}
 	}
 	return tokens, nil
+}
+
+// InsertStatusMessage records a new status message
+func (d *SQLiteDriver) InsertStatusMessage(token, messageID string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec("INSERT OR IGNORE INTO status_messages (message_id, token) VALUES (?, ?)", messageID, token)
+	return err
+}
+
+// AddStatusView records that someone viewed a status
+func (d *SQLiteDriver) AddStatusView(messageID, viewerJID string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec("INSERT OR IGNORE INTO status_views (message_id, viewer_jid, is_reply) VALUES (?, ?, 0)", messageID, viewerJID)
+	return err
+}
+
+// AddStatusReply records that someone replied to a status
+func (d *SQLiteDriver) AddStatusReply(messageID, viewerJID string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec("INSERT OR IGNORE INTO status_views (message_id, viewer_jid, is_reply) VALUES (?, ?, 1)", messageID, viewerJID)
+	return err
+}
+
+// GetStatusAnalytics fetches analytics for statuses belonging to a token
+func (d *SQLiteDriver) GetStatusAnalytics(token string) ([]StatusAnalytics, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	query := `
+		SELECT 
+			sm.message_id, 
+			sm.created_at,
+			COUNT(CASE WHEN sv.is_reply = 0 THEN 1 END) as view_count,
+			COUNT(CASE WHEN sv.is_reply = 1 THEN 1 END) as reply_count
+		FROM status_messages sm
+		LEFT JOIN status_views sv ON sm.message_id = sv.message_id
+		WHERE sm.token = ?
+		GROUP BY sm.message_id
+		ORDER BY sm.created_at DESC
+		LIMIT 50
+	`
+
+	rows, err := d.db.Query(query, token)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []StatusAnalytics
+	for rows.Next() {
+		var s StatusAnalytics
+		if err := rows.Scan(&s.MessageID, &s.Timestamp, &s.ViewCount, &s.ReplyCount); err == nil {
+			results = append(results, s)
+		}
+	}
+	return results, nil
+}
+
+// CleanupOldStatuses removes statuses older than 'days' to prevent DB bloat
+func (d *SQLiteDriver) CleanupOldStatuses(days int) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Delete views for old statuses
+	_, err := d.db.Exec(`
+		DELETE FROM status_views 
+		WHERE message_id IN (
+			SELECT message_id FROM status_messages 
+			WHERE created_at < datetime('now', '-' || ? || ' days')
+		)
+	`, days)
+	if err != nil {
+		return err
+	}
+
+	// Delete old statuses
+	_, err = d.db.Exec("DELETE FROM status_messages WHERE created_at < datetime('now', '-' || ? || ' days')", days)
+	return err
 }

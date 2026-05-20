@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ApiWago - WhatsApp Multi-Device</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
             --primary: #128c7e;
@@ -583,6 +584,7 @@
                         <div class="tab" onclick="switchTab('groups')">Groups</div>
                         <div class="tab" onclick="switchTab('profile')">Profile</div>
                         <div class="tab" onclick="switchTab('utilities')">Utilities</div>
+                        <div class="tab" onclick="switchTab('analytics')">Status Analytics</div>
                     </div>
 
                     <!-- Send Tab -->
@@ -676,6 +678,32 @@
                                 <button class="secondary" onclick="sendPresence()">Send State</button>
                                 <div id="presence-result"></div>
                             </div>
+                            <div id="presence-status" class="mt-2 text-sm text-center"></div>
+                        </div>
+                    </div>
+
+                    <!-- Analytics Tab -->
+                    <div id="tab-analytics" class="hidden">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 1rem;">
+                            <h3>Status Analytics</h3>
+                            <button class="secondary sm" onclick="loadStatusAnalytics()">Refresh Data</button>
+                        </div>
+                        
+                        <div class="card" style="margin-bottom: 2rem; background: #fff;">
+                            <canvas id="statusChart" height="100"></canvas>
+                        </div>
+
+                        <div style="background: var(--light); padding: 1rem; border-radius: 8px;">
+                            <h4>Post a Test Status</h4>
+                            <p style="font-size:12px; color:var(--gray); margin-bottom:1rem;">Broadcasts a text or image status to see live views and replies on the chart.</p>
+                            <div class="flex gap-2" style="margin-bottom: 0.5rem;">
+                                <input type="file" id="test-status-file" accept="image/*,video/*" style="flex:1;">
+                            </div>
+                            <div class="flex gap-2">
+                                <input type="text" id="test-status-text" placeholder="Caption (optional if image)" style="flex:1;">
+                                <button onclick="sendTestStatus()">Post Status</button>
+                            </div>
+                            <div id="test-status-result" class="mt-2 text-sm"></div>
                         </div>
                     </div>
                 </div>
@@ -851,6 +879,7 @@
 
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
         const API_KEY = "";
         const API_BASE = '/api';
@@ -1293,12 +1322,16 @@
 
             // Activate
             document.querySelectorAll('.tab').forEach(btn => {
-                if (btn.innerText.toLowerCase().includes(tab.replace('send', 'message'))) btn.classList.add('active');
+                const btnText = btn.innerText.toLowerCase();
+                if (btnText.includes(tab.replace('send', 'message')) || (tab === 'analytics' && btnText.includes('analytics'))) {
+                    btn.classList.add('active');
+                }
             });
             document.getElementById('tab-' + tab).classList.remove('hidden');
 
             if (tab === 'contacts') loadContacts();
             if (tab === 'groups') loadGroups();
+            if (tab === 'analytics') loadStatusAnalytics();
         }
 
         async function sendMessage() {
@@ -1309,17 +1342,157 @@
             const status = document.getElementById('send-status');
 
             status.innerHTML = 'Sending...';
-            const res = await fetch(`${API_BASE}/send`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: currentToken, phone: to, message: msg, file_url: fileUrl, file_name: fileName })
-            });
-            const d = await res.json();
+            try {
+                const res = await fetch(`${API_BASE}/send`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: currentToken, phone: to, message: msg, file_url: fileUrl, file_name: fileName })
+                });
+                const d = await res.json();
 
-            if (d.status) {
-                status.innerHTML = `<span style="color:var(--primary)">Sent! (ID: ${d.data.id})</span>`;
-            } else {
-                status.innerHTML = `<span style="color:var(--danger)">${d.message}</span>`;
+                if (d.status) {
+                    status.innerHTML = `<span style="color:var(--primary)">Sent! (ID: ${d.data.id})</span>`;
+                } else {
+                    status.innerHTML = `<span style="color:var(--danger)">${d.message}</span>`;
+                }
+            } catch (err) {
+                status.innerHTML = `<span style="color:var(--danger)">Error: ${err.message}</span>`;
+            }
+        }
+
+        // --- STATUS ANALYTICS ---
+        let statusChartInstance = null;
+
+        async function loadStatusAnalytics() {
+            if (!currentToken) return;
+            try {
+                const res = await fetch(`${API_BASE}/status-analytics?token=${currentToken}`);
+                const d = await res.json();
+                
+                if (d.status && d.data) {
+                    renderStatusChart(d.data);
+                }
+            } catch (err) {
+                console.error("Failed to load analytics", err);
+            }
+        }
+
+        function renderStatusChart(data) {
+            const ctx = document.getElementById('statusChart').getContext('2d');
+            
+            // Reverse data to show oldest to newest (left to right)
+            const chartData = [...data].reverse();
+            
+            const labels = chartData.map(item => {
+                const d = new Date(item.timestamp);
+                return d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            });
+            const views = chartData.map(item => item.view_count);
+            const replies = chartData.map(item => item.reply_count);
+
+            if (statusChartInstance) {
+                statusChartInstance.destroy();
+            }
+
+            statusChartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Views',
+                            data: views,
+                            backgroundColor: 'rgba(37, 211, 102, 0.7)',
+                            borderColor: 'rgba(37, 211, 102, 1)',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Replies',
+                            data: replies,
+                            backgroundColor: 'rgba(18, 140, 126, 0.7)',
+                            borderColor: 'rgba(18, 140, 126, 1)',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { precision: 0 }
+                        }
+                    },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Recent Status Analytics'
+                        }
+                    }
+                }
+            });
+        }
+
+        async function sendTestStatus() {
+            const text = document.getElementById('test-status-text').value;
+            const fileInput = document.getElementById('test-status-file');
+            const resDiv = document.getElementById('test-status-result');
+            
+            if (!text && (!fileInput.files || fileInput.files.length === 0)) return;
+
+            resDiv.innerHTML = 'Sending...';
+
+            let fileUrl = '';
+            let fileName = '';
+
+            // If a file is selected, read it as base64
+            if (fileInput.files && fileInput.files.length > 0) {
+                const file = fileInput.files[0];
+                fileName = file.name;
+                
+                try {
+                    fileUrl = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = (e) => resolve(e.target.result);
+                        reader.onerror = (e) => reject(new Error("Failed to read file"));
+                        reader.readAsDataURL(file);
+                    });
+                } catch (e) {
+                    resDiv.innerHTML = `<span style="color:var(--danger)">Error reading file: ${e.message}</span>`;
+                    return;
+                }
+            }
+
+            try {
+                // Send to status@broadcast
+                const payload = { 
+                    token: currentToken, 
+                    phone: 'status@broadcast', 
+                    message: text 
+                };
+
+                if (fileUrl) {
+                    payload.file_url = fileUrl;
+                    payload.file_name = fileName;
+                }
+
+                const res = await fetch(`${API_BASE}/send`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const d = await res.json();
+                
+                if (d.status) {
+                    resDiv.innerHTML = `<span style="color:var(--primary)">Status posted! (ID: ${d.data.id})</span>`;
+                    document.getElementById('test-status-text').value = '';
+                    document.getElementById('test-status-file').value = '';
+                    setTimeout(loadStatusAnalytics, 1000); // Reload chart
+                } else {
+                    resDiv.innerHTML = `<span style="color:var(--danger)">${d.message}</span>`;
+                }
+            } catch (err) {
+                resDiv.innerHTML = `<span style="color:var(--danger)">Error: ${err.message}</span>`;
             }
         }
 

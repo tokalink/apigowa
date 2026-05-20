@@ -595,6 +595,7 @@ func (s *Server) RegisterRoutes(r *gin.Engine) {
 		api.POST("/profile/status", s.SetStatusMessageHandler)
 		api.POST("/check-number", s.CheckNumberHandler)
 		api.POST("/presence", s.SendPresenceHandler)
+		api.GET("/status-analytics", s.StatusAnalyticsHandler)
 
 		// Admin Routes
 		api.POST("/setup", s.SetupHandler)
@@ -756,4 +757,20 @@ func (s *Server) SendPresenceHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": true, "message": "presence sent"})
+}
+
+func (s *Server) StatusAnalyticsHandler(c *gin.Context) {
+	token := c.Query("token")
+	if token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+		return
+	}
+
+	analytics, err := s.Service.Store.Driver.GetStatusAnalytics(token)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": true, "data": analytics})
 }

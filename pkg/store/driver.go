@@ -41,6 +41,21 @@ type DBDriver interface {
 
 	// Utility operations
 	GetLoggedInTokens() ([]string, error) // Returns all tokens with valid JIDs
+
+	// Status Analytics operations
+	InsertStatusMessage(token, messageID string) error
+	AddStatusView(messageID, viewerJID string) error
+	AddStatusReply(messageID, viewerJID string) error
+	GetStatusAnalytics(token string) ([]StatusAnalytics, error)
+	CleanupOldStatuses(days int) error
+}
+
+// StatusAnalytics represents aggregated metrics for a status
+type StatusAnalytics struct {
+	MessageID string `json:"message_id"`
+	Timestamp string `json:"timestamp"`
+	ViewCount int    `json:"view_count"`
+	ReplyCount int   `json:"reply_count"`
 }
 
 // DeviceSummary represents a device/token summary

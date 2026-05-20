@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -175,6 +176,11 @@ func (s *Service) StartPeriodicCheck(ctx context.Context) {
 				return
 			case <-ticker.C:
 				s.checkConnectivity()
+				
+				// Cleanup old status analytics data (keep for 7 days)
+				if err := s.Store.Driver.CleanupOldStatuses(7); err != nil {
+					fmt.Printf("[PeriodicCheck] Failed to cleanup old statuses: %v\n", err)
+				}
 			}
 		}
 	}()
@@ -347,6 +353,21 @@ func (s *Service) handleEvent(token string, client *whatsmeow.Client, evt interf
 			s.handleMessage(token, client, v)
 		})
 
+	case *events.Receipt:
+		s.workerPool.Submit(func() {
+			// DEBUG: Print all receipts to see what a view looks like
+			fmt.Printf("[DEBUG-RECEIPT] Type=%s, Chat=%s, Sender=%s, MsgIDs=%v\n", v.Type, v.Chat.String(), v.Sender.String(), v.MessageIDs)
+
+			// Track Status View: If it's a read receipt for a broadcast, it's someone viewing our status
+			if v.Chat.Server == "broadcast" && (string(v.Type) == "read" || string(v.Type) == "read-self" || string(v.Type) == "played") {
+				for _, msgID := range v.MessageIDs {
+					_ = s.Store.Driver.AddStatusView(string(msgID), v.Sender.ToNonAD().String())
+				}
+			}
+
+			s.handleWebhookEvent(token, v)
+		})
+
 	case *events.LoggedOut:
 		s.workerPool.Submit(func() {
 			reason := fmt.Sprintf("LoggedOut event (reason: %d)", v.Reason)
@@ -424,6 +445,11 @@ func (s *Service) handleConnected(token string, client *whatsmeow.Client) {
 // handleMessage processes incoming messages
 func (s *Service) handleMessage(token string, client *whatsmeow.Client, v *events.Message) {
 	if v.Info.IsFromMe {
+		// Track Outgoing Status: If this is a status we posted (even from the phone itself)
+		if v.Info.Chat.Server == "broadcast" {
+			_ = s.Store.Driver.InsertStatusMessage(token, v.Info.ID)
+		}
+
 		// If FromMe, check if we want to send webhook (omnichannel)
 		fmt.Printf("[handleMessage] Outgoing message detected. WebhookType: %s\n", s.WebhookType)
 		if s.WebhookType == "all" {
@@ -431,6 +457,15 @@ func (s *Service) handleMessage(token string, client *whatsmeow.Client, v *event
 			s.handleWebhookEvent(token, v)
 		}
 		return
+	}
+
+	// Track Status Reply: If this is a reply (has context info), attempt to record it as a status reply
+	if ext := v.Message.GetExtendedTextMessage(); ext != nil && ext.GetContextInfo() != nil {
+		stanzaId := ext.GetContextInfo().GetStanzaID()
+		if stanzaId != "" {
+			// It's a reply to some message. If it's our status, this will be recorded.
+			_ = s.Store.Driver.AddStatusReply(stanzaId, v.Info.Sender.ToNonAD().String())
+		}
 	}
 
 	msgText := v.Message.GetConversation()
@@ -950,6 +985,10 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 
 	resp, err := client.SendMessage(ctx, recipient, msg)
 	if err != nil {
+		fmt.Printf("\n[DEBUG-SEND] SendMessage failed for %s!\n", recipient.String())
+		fmt.Printf("[DEBUG-SEND] Raw Error: %+v\n", err)
+		fmt.Printf("[DEBUG-SEND] Error Type: %T\n\n", err)
+
 		// Check if it's a "not registered" error from WhatsApp
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "not on whatsapp") || strings.Contains(errStr, "unknown user") || strings.Contains(errStr, "recipient not found") {
@@ -957,6 +996,13 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 		}
 		return "", err
 	}
+
+	// Record Status Message in DB for Analytics
+	if err == nil && recipient.Server == "broadcast" {
+		_ = s.Store.Driver.InsertStatusMessage(token, resp.ID)
+	}
+
+	fmt.Printf("[SendMessage] Success. ID: %s\n", resp.ID)
 	return resp.ID, nil
 }
 
@@ -1436,21 +1482,46 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 		}
 	}
 
-	// Use pooled HTTP client
-	resp, err := s.httpClient.Get().Get(url)
-	if err != nil {
-		return "", fmt.Errorf("failed to download media: %w", err)
-	}
-	defer resp.Body.Close()
+	var data []byte
+	var mimeType string
 
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read media body: %w", err)
-	}
+	if strings.HasPrefix(url, "data:") {
+		// Parse data URI
+		parts := strings.SplitN(url, ",", 2)
+		if len(parts) == 2 {
+			meta := parts[0]
+			b64Data := parts[1]
+			
+			// Extract mime type
+			metaParts := strings.Split(strings.TrimPrefix(meta, "data:"), ";")
+			mimeType = metaParts[0]
 
-	mimeType := http.DetectContentType(data)
-	if resp.Header.Get("Content-Type") != "" && resp.Header.Get("Content-Type") != "application/octet-stream" {
-		mimeType = resp.Header.Get("Content-Type")
+			// Decode base64
+			decoded, err := base64.StdEncoding.DecodeString(b64Data)
+			if err != nil {
+				return "", fmt.Errorf("failed to decode base64 data URI: %w", err)
+			}
+			data = decoded
+		} else {
+			return "", fmt.Errorf("invalid data URI format")
+		}
+	} else {
+		// Use pooled HTTP client
+		resp, err := s.httpClient.Get().Get(url)
+		if err != nil {
+			return "", fmt.Errorf("failed to download media: %w", err)
+		}
+		defer resp.Body.Close()
+
+		data, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("failed to read media body: %w", err)
+		}
+
+		mimeType = http.DetectContentType(data)
+		if resp.Header.Get("Content-Type") != "" && resp.Header.Get("Content-Type") != "application/octet-stream" {
+			mimeType = resp.Header.Get("Content-Type")
+		}
 	}
 
 	var msg *waE2E.Message
@@ -1502,6 +1573,12 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 	if err != nil {
 		return "", err
 	}
+
+	// Record Status Message in DB for Analytics
+	if recipient.Server == "broadcast" {
+		_ = s.Store.Driver.InsertStatusMessage(token, sendResp.ID)
+	}
+
 	return sendResp.ID, nil
 }
 
