@@ -139,6 +139,87 @@ curl -X POST http://localhost:8080/api/send \
   }'
 ```
 
+## 🐳 Menjalankan dengan Docker
+
+ApiWago dapat dengan mudah dijalankan menggunakan Docker. Anda bisa menggunakan image yang telah disediakan (`tokalink/wago:latest`) atau melakukan build sendiri.
+
+### 1. Menggunakan Docker CLI (Terminal Langsung)
+
+Anda bisa langsung menjalankan container dari terminal. Pastikan Anda telah membuat file `.env` sesuai panduan di atas.
+
+```bash
+docker run -d \
+  --name apiwago \
+  --env-file .env \
+  -p 8080:8080 \
+  -v $(pwd)/store.db:/app/store.db \
+  -v $(pwd)/.env:/app/.env \
+  tokalink/wago:latest
+```
+
+> **Catatan:** Sesuaikan pemetaan port `-p 8080:8080` dengan `PORT` di konfigurasi Anda. Jika Anda menggunakan database SQLite, sangat penting untuk me-mount `store.db` (atau path DB_PATH Anda) agar sesi login WhatsApp tidak hilang saat container di-restart.
+
+### 2. Menggunakan Docker Compose (Direkomendasikan)
+
+Untuk manajemen yang lebih mudah, Anda dapat menggunakan Docker Compose. Berikut adalah contoh konfigurasi `docker-compose.yml`:
+
+```yaml
+services:
+  apiwago:
+    image: tokalink/wago:latest
+    container_name: apiwago
+    env_file:
+      - .env
+    ports:
+      - "8080:8080" # Format: "PORT_HOST:PORT_CONTAINER"
+    volumes:
+      - .env:/app/.env
+      - ./store.db:/app/store.db # Persistensi DB SQLite
+    restart: unless-stopped
+```
+
+Jika Anda menggunakan environment management server seperti **1Panel**, Anda bisa menyesuaikan konfigurasi volume dan network. Berikut contoh konfigurasi seperti file `docker-compose.yml` bawaan repository:
+
+```yaml
+services:
+  apiwago:
+    image: tokalink/wago:latest
+    container_name: apiwago
+    env_file:
+      - .env
+    ports:
+      - "${API_PORT}:8080" # Mapping port server host (API_PORT) ke container (8080)
+    volumes:
+      - .env:/app/.env
+      - ./data:/app/data # Jika menggunakan folder khusus /data
+    networks:
+      - 1panel-network
+
+networks:
+  1panel-network:
+    external: true
+```
+
+Jalankan container menggunakan perintah:
+```bash
+docker compose up -d
+```
+
+### 3. Build Image Docker Sendiri
+
+Jika Anda melakukan perubahan kode dan ingin mem-build image Docker, gunakan script yang telah disediakan di folder `builds`:
+
+```bash
+cd builds
+.\build_and_push.bat
+```
+
+Script `build_and_push.bat` ini akan membaca `Dockerfile` dan secara otomatis:
+1. Melakukan kompilasi binary Go khusus untuk OS Linux (`apiwago-linux-amd64`) menggunakan base image `alpine:latest`.
+2. Melakukan proses build Docker image.
+3. Memberikan versi otomatis pada image (`tokalink/wago:latest` dan `tokalink/wago:v2`).
+4. Mengunggah (push) image tersebut ke Docker registry.
+
 ## 🛠️ Build from Source
 
 ### Requirements

@@ -100,9 +100,9 @@ HTTP_POOL_SIZE=100
 # Media Configuration
 # =====================
 
-# Save Media: NULL (default), LOCAL, S3
-# NULL: Tidak menyimpan media
-# LOCAL: Simpan di folder ./media
+# Save Media: NULL (default), LOCAL, S3, or true/false (true = LOCAL, false = NULL)
+# NULL/false: Tidak menyimpan media
+# LOCAL/true: Simpan di folder ./media
 # S3: Upload ke S3 Compatible Storage
 SAVE_MEDIA=NULL
 
@@ -169,7 +169,7 @@ func runInit() error {
 	fmt.Println("   - HTTP_POOL_SIZE      : HTTP connections (default: 100)")
 	fmt.Println("")
 	fmt.Println("   Konfigurasi Media:")
-	fmt.Println("   - SAVE_MEDIA          : NULL, LOCAL, atau S3 (default: NULL)")
+	fmt.Println("   - SAVE_MEDIA          : NULL, LOCAL, S3, atau true/false (default: NULL)")
 	fmt.Println("   - S3_ENDPOINT         : Endpoint S3 (jika SAVE_MEDIA=S3)")
 	fmt.Println("   - S3_ACCESS_KEY       : Access Key ID S3")
 	fmt.Println("   - S3_SECRET_KEY       : Secret Access Key S3")

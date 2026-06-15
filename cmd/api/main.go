@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"apiwago/internal/api"
 	"apiwago/internal/web"
@@ -156,7 +157,8 @@ func runForeground() {
 	})
 	r.StaticFS("/static", web.GetFileSystem())
 	// Serve media files if LOCAL storage is enabled
-	if os.Getenv("SAVE_MEDIA") == "LOCAL" {
+	saveMediaEnv := strings.ToUpper(os.Getenv("SAVE_MEDIA"))
+	if saveMediaEnv == "LOCAL" || saveMediaEnv == "TRUE" {
 		// Ensure media directory exists
 		if err := os.MkdirAll("media", 0755); err != nil {
 			log.Printf("Failed to create media directory: %v", err)

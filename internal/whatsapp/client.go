@@ -61,8 +61,10 @@ func NewService(s *store.Store, webhookURL string) *Service {
 	poolCfg := NewPoolConfigFromEnv()
 
 	wt := os.Getenv("WEBHOOKTYPE")
-	saveMedia := os.Getenv("SAVE_MEDIA")
-	if saveMedia == "" {
+	saveMedia := strings.ToUpper(os.Getenv("SAVE_MEDIA"))
+	if saveMedia == "TRUE" {
+		saveMedia = "LOCAL"
+	} else if saveMedia == "FALSE" || saveMedia == "" {
 		saveMedia = "NULL"
 	}
 
@@ -985,16 +987,51 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 
 	resp, err := client.SendMessage(ctx, recipient, msg)
 	if err != nil {
-		fmt.Printf("\n[DEBUG-SEND] SendMessage failed for %s!\n", recipient.String())
-		fmt.Printf("[DEBUG-SEND] Raw Error: %+v\n", err)
-		fmt.Printf("[DEBUG-SEND] Error Type: %T\n\n", err)
-
-		// Check if it's a "not registered" error from WhatsApp
 		errStr := strings.ToLower(err.Error())
-		if strings.Contains(errStr, "not on whatsapp") || strings.Contains(errStr, "unknown user") || strings.Contains(errStr, "recipient not found") {
-			return "", ErrUserNotRegistered
+
+		// Auto-reconnect on 400 error logic
+		if strings.Contains(errStr, "server returned error 400") || strings.Contains(errStr, "bad request") {
+			fmt.Printf("[SendMessage] Received 400 error for token %s. Attempting 1x auto-reconnect...\n", token)
+			client.Disconnect()
+			time.Sleep(1 * time.Second)
+			
+			if reconnectErr := client.Connect(); reconnectErr == nil {
+				// Retry sending
+				fmt.Printf("[SendMessage] Reconnect success, retrying send for token %s...\n", token)
+				
+				// Recreate context for retry
+				retryCtx, retryCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer retryCancel()
+				
+				resp, err = client.SendMessage(retryCtx, recipient, msg)
+				if err != nil {
+					retryErrStr := strings.ToLower(err.Error())
+					if strings.Contains(retryErrStr, "server returned error 400") || strings.Contains(retryErrStr, "bad request") {
+						fmt.Printf("[SendMessage] Send failed again with 400 after reconnect. Purging session for %s...\n", token)
+						// Run cleanup in goroutine to avoid blocking
+						go s.cleanupSession(token, "Persistent Error 400 on send")
+						return "", err
+					}
+				}
+			} else {
+				fmt.Printf("[SendMessage] Reconnect failed for %s: %v. Purging session...\n", token, reconnectErr)
+				go s.cleanupSession(token, "Failed to reconnect after 400 error")
+				return "", err
+			}
 		}
-		return "", err
+
+		if err != nil {
+			fmt.Printf("\n[DEBUG-SEND] SendMessage failed for %s!\n", recipient.String())
+			fmt.Printf("[DEBUG-SEND] Raw Error: %+v\n", err)
+			fmt.Printf("[DEBUG-SEND] Error Type: %T\n\n", err)
+
+			errStr = strings.ToLower(err.Error())
+			// Check if it's a "not registered" error from WhatsApp
+			if strings.Contains(errStr, "not on whatsapp") || strings.Contains(errStr, "unknown user") || strings.Contains(errStr, "recipient not found") {
+				return "", ErrUserNotRegistered
+			}
+			return "", err
+		}
 	}
 
 	// Record Status Message in DB for Analytics
@@ -1571,7 +1608,41 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 
 	sendResp, err := client.SendMessage(context.Background(), recipient, msg)
 	if err != nil {
-		return "", err
+		errStr := strings.ToLower(err.Error())
+
+		// Auto-reconnect on 400 error logic
+		if strings.Contains(errStr, "server returned error 400") || strings.Contains(errStr, "bad request") {
+			fmt.Printf("[SendMedia] Received 400 error for token %s. Attempting 1x auto-reconnect...\n", token)
+			client.Disconnect()
+			time.Sleep(1 * time.Second)
+			
+			if reconnectErr := client.Connect(); reconnectErr == nil {
+				// Retry sending
+				fmt.Printf("[SendMedia] Reconnect success, retrying send for token %s...\n", token)
+				
+				sendResp, err = client.SendMessage(context.Background(), recipient, msg)
+				if err != nil {
+					retryErrStr := strings.ToLower(err.Error())
+					if strings.Contains(retryErrStr, "server returned error 400") || strings.Contains(retryErrStr, "bad request") {
+						fmt.Printf("[SendMedia] Send failed again with 400 after reconnect. Purging session for %s...\n", token)
+						go s.cleanupSession(token, "Persistent Error 400 on send media")
+						return "", err
+					}
+				}
+			} else {
+				fmt.Printf("[SendMedia] Reconnect failed for %s: %v. Purging session...\n", token, reconnectErr)
+				go s.cleanupSession(token, "Failed to reconnect after 400 error")
+				return "", err
+			}
+		}
+
+		if err != nil {
+			errStr = strings.ToLower(err.Error())
+			if strings.Contains(errStr, "not on whatsapp") || strings.Contains(errStr, "unknown user") || strings.Contains(errStr, "recipient not found") {
+				return "", ErrUserNotRegistered
+			}
+			return "", err
+		}
 	}
 
 	// Record Status Message in DB for Analytics
