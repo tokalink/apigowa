@@ -95,23 +95,85 @@ apikey: YOUR_API_KEY
 
 ### Endpoints
 
+Semua request wajib menggunakan `Content-Type: application/json` kecuali endpoint yang mengembalikan gambar/stream.
+
+#### 1. Device & Session Management (Requires API Key)
 | Method | Endpoint | Keterangan |
 |--------|----------|------------|
-| POST | `/api/start` | Initialize session |
-| POST | `/api/qrcode` | Get QR code / status |
-| GET | `/api/status?token=X` | Get connection status |
-| POST | `/api/send` | Send message |
-| GET | `/api/contacts?token=X` | Get contacts |
-| GET | `/api/groups?token=X` | Get groups |
-| POST | `/api/logout?token=X` | Logout session |
-| POST | `/api/reconnect?token=X` | Reconnect session |
-| GET | `/api/devices` | List all devices |
-| DELETE | `/api/device?token=X` | Delete device |
-| POST | `/api/webhook` | Set webhook URL |
-| POST | `/api/workspace` | Set workspace |
-| GET | `/api/workspaces` | List workspaces |
+| POST | `/api/start` | Inisialisasi session device baru |
+| GET/POST | `/api/qrcode` | Mendapatkan QR code dalam format Base64 |
+| GET | `/api/devices` | Mengambil daftar semua device / token yang ada |
+| DELETE | `/api/device?token=X` | Menghapus device dan seluruh session-nya |
+| POST | `/api/webhook` | Mengatur URL Webhook spesifik untuk suatu token |
+| POST | `/api/workspace` | Mengatur workspace untuk suatu token |
+| GET | `/api/workspaces` | Mendapatkan daftar semua workspace yang ada |
 
-### Send Message Example
+#### 2. WhatsApp Operations (Token Based)
+*Endpoint di bawah ini membutuhkan parameter `token` di Query URL atau di dalam body JSON.*
+
+| Method | Endpoint | Keterangan |
+|--------|----------|------------|
+| POST | `/api/send` | Mengirim pesan teks atau media (gambar, video, dll) |
+| POST | `/api/pair` | Generate Pairing Code (Alternatif login tanpa QR) |
+| GET/POST| `/api/status` | Mengecek status koneksi dari suatu token |
+| GET | `/api/contacts` | Mengambil daftar kontak dari WhatsApp |
+| GET | `/api/groups` | Mengambil daftar grup WhatsApp |
+| POST | `/api/check-number` | Memeriksa apakah sebuah nomor terdaftar di WhatsApp |
+| POST | `/api/presence` | Mengirim status *presence* (typing, recording, dll) ke obrolan |
+| POST | `/api/profile/status` | Mengubah teks status/bio pada profil WhatsApp device tersebut |
+| GET | `/api/status-analytics`| Mengambil analitik dari Status/Story WhatsApp (views & replies) |
+| POST | `/api/reconnect` | Memaksa koneksi ulang untuk session yang terputus |
+| POST | `/api/logout` | Melakukan logout session (menghapus login di HP) |
+| GET | `/api/login` | Mendapatkan QR Code berupa raw image (Legacy) |
+| GET | `/api/login-sse` | Mendapatkan QR Code secara real-time via Server-Sent Events (SSE) |
+
+#### 3. Admin & Dashboard Routes
+*Digunakan oleh Web Dashboard untuk keperluan login admin.*
+
+| Method | Endpoint | Keterangan |
+|--------|----------|------------|
+| GET | `/api/check-setup` | Mengecek apakah akun admin sudah dibuat |
+| POST | `/api/setup` | Membuat akun admin pertama kali |
+| POST | `/api/login-admin`| Login admin web dashboard (mendapatkan cookie session) |
+| POST | `/api/logout-admin`| Logout dari web dashboard |
+
+### 1. Inisialisasi Session (Start)
+Sebelum login, Anda wajib melakukan inisialisasi session untuk token baru.
+
+```bash
+curl -X POST http://localhost:8080/api/start \
+  -H "apikey: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "token": "my-token"
+  }'
+```
+
+### 2. Login via Scan QR Code
+Mendapatkan QR Code dalam format Base64 (image) untuk di-scan melalui HP.
+
+```bash
+curl -X POST http://localhost:8080/api/qrcode \
+  -H "apikey: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "token": "my-token"
+  }'
+```
+
+### 3. Login via Pairing Code
+Jika Anda tidak bisa melakukan scan QR, gunakan nomor HP untuk mendapatkan 8 digit kode verifikasi (kode akan muncul dari API ini, lalu masukkan ke notifikasi HP Anda).
+
+```bash
+curl -X POST http://localhost:8080/api/pair \
+  -H "Content-Type: application/json" \
+  -d '{
+    "token": "my-token",
+    "phone": "628123456789"
+  }'
+```
+
+### 4. Send Message Example
 
 ```bash
 curl -X POST http://localhost:8080/api/send \

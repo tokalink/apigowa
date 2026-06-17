@@ -1054,12 +1054,24 @@ func (s *Service) PairPhone(token, phone string) (string, error) {
 	}
 
 	if !client.IsConnected() {
+		// Listen to QR channel to know when connection is fully established
+		qrChan, _ := client.GetQRChannel(context.Background())
+		
 		if err := client.Connect(); err != nil {
 			return "", err
 		}
-	}
 
-	time.Sleep(1 * time.Second)
+		// Wait for the first event which confirms the connection handshake is done
+		select {
+		case <-qrChan:
+			fmt.Printf("[PairPhone] Connection fully established for token: %s\n", token)
+		case <-time.After(15 * time.Second):
+			return "", fmt.Errorf("timeout waiting for connection to establish")
+		}
+	} else {
+		// Just to be safe if it was connected right before this call
+		time.Sleep(2 * time.Second)
+	}
 
 	// Browser name moved to beginning of function
 
@@ -1071,12 +1083,9 @@ func (s *Service) PairPhone(token, phone string) (string, error) {
 
 	phone = NormalizePhone(phone)
 
-	// WhatsApp requires a specific format for the client display name in PairPhone (e.g. "Browser (OS)").
-	// Using a known format like "Chrome (Windows)" avoids the 400 bad-request error.
+	// WhatsApp STRICTLY REQUIRES a valid browser format for the client display name in PairPhone (e.g. "Chrome (Windows)").
+	// If we pass the DEVICE_NAME from .env (e.g., "ApiWago (Windows)"), WhatsApp server will reject it with 400 bad-request.
 	clientDisplayName := "Chrome (Windows)"
-	if browserName != "Chrome" && browserName != "" {
-		clientDisplayName = browserName + " (Windows)"
-	}
 
 	fmt.Printf("[PairPhone] Phone: %s, Browser: %s\n", phone, clientDisplayName)
 
