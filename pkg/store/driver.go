@@ -47,6 +47,7 @@ type DBDriver interface {
 	AddStatusView(messageID, viewerJID string) error
 	AddStatusReply(messageID, viewerJID string) error
 	GetStatusAnalytics(token string) ([]StatusAnalytics, error)
+	DeleteStatusMessage(messageID string) error
 	CleanupOldStatuses(days int) error
 }
 

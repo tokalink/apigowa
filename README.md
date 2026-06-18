@@ -122,6 +122,7 @@ Semua request wajib menggunakan `Content-Type: application/json` kecuali endpoin
 | POST | `/api/presence` | Mengirim status *presence* (typing, recording, dll) ke obrolan |
 | POST | `/api/profile/status` | Mengubah teks status/bio pada profil WhatsApp device tersebut |
 | GET | `/api/status-analytics`| Mengambil analitik dari Status/Story WhatsApp (views & replies) |
+| DELETE | `/api/story` | Menghapus Status/Story WhatsApp & data analitiknya dari database |
 | POST | `/api/reconnect` | Memaksa koneksi ulang untuk session yang terputus |
 | POST | `/api/logout` | Melakukan logout session (menghapus login di HP) |
 | GET | `/api/login` | Mendapatkan QR Code berupa raw image (Legacy) |

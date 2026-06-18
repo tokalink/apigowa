@@ -446,6 +446,18 @@ func (s *Service) handleConnected(token string, client *whatsmeow.Client) {
 
 // handleMessage processes incoming messages
 func (s *Service) handleMessage(token string, client *whatsmeow.Client, v *events.Message) {
+	// Detect if it's a message revocation (e.g., status deleted from phone)
+	if protocolMsg := v.Message.GetProtocolMessage(); protocolMsg != nil {
+		if protocolMsg.GetType() == waE2E.ProtocolMessage_REVOKE {
+			revokedMsgId := protocolMsg.GetKey().GetID()
+			if revokedMsgId != "" {
+				// Attempt to delete it from status_analytics DB (if it wasn't a status, no rows affected, which is fine)
+				_ = s.Store.Driver.DeleteStatusMessage(revokedMsgId)
+				fmt.Printf("[handleMessage] Detected revoked message %s, removed from DB (if present)\n", revokedMsgId)
+			}
+		}
+	}
+
 	if v.Info.IsFromMe {
 		// Track Outgoing Status: If this is a status we posted (even from the phone itself)
 		if v.Info.Chat.Server == "broadcast" {
@@ -1572,7 +1584,24 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 
 	var msg *waE2E.Message
 
-	if strings.HasPrefix(mimeType, "image/") {
+	if mimeType == "image/webp" {
+		uploaded, err := client.Upload(context.Background(), data, whatsmeow.MediaImage)
+		if err != nil {
+			return "", fmt.Errorf("failed to upload sticker: %w", err)
+		}
+
+		msg = &waE2E.Message{
+			StickerMessage: &waE2E.StickerMessage{
+				Mimetype:      proto.String(mimeType),
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(data))),
+			},
+		}
+	} else if strings.HasPrefix(mimeType, "image/") {
 		uploaded, err := client.Upload(context.Background(), data, whatsmeow.MediaImage)
 		if err != nil {
 			return "", fmt.Errorf("failed to upload image: %w", err)
@@ -1581,6 +1610,41 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 		msg = &waE2E.Message{
 			ImageMessage: &waE2E.ImageMessage{
 				Caption:       proto.String(caption),
+				Mimetype:      proto.String(mimeType),
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(data))),
+			},
+		}
+	} else if strings.HasPrefix(mimeType, "video/") {
+		uploaded, err := client.Upload(context.Background(), data, whatsmeow.MediaVideo)
+		if err != nil {
+			return "", fmt.Errorf("failed to upload video: %w", err)
+		}
+
+		msg = &waE2E.Message{
+			VideoMessage: &waE2E.VideoMessage{
+				Caption:       proto.String(caption),
+				Mimetype:      proto.String(mimeType),
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(data))),
+			},
+		}
+	} else if strings.HasPrefix(mimeType, "audio/") {
+		uploaded, err := client.Upload(context.Background(), data, whatsmeow.MediaAudio)
+		if err != nil {
+			return "", fmt.Errorf("failed to upload audio: %w", err)
+		}
+
+		msg = &waE2E.Message{
+			AudioMessage: &waE2E.AudioMessage{
 				Mimetype:      proto.String(mimeType),
 				URL:           proto.String(uploaded.URL),
 				DirectPath:    proto.String(uploaded.DirectPath),
@@ -1665,6 +1729,38 @@ func (s *Service) SendMedia(token, to, url, caption, fileName string) (string, e
 // GetClientCount returns the number of connected clients (for monitoring)
 func (s *Service) GetClientCount() int {
 	return s.clientPool.Count()
+}
+
+// DeleteStory revokes a WhatsApp Status (Story) and deletes its analytics from the database
+func (s *Service) DeleteStory(token, messageID string) error {
+	client, err := s.GetClient(token)
+	if err != nil {
+		return err
+	}
+
+	if !client.IsConnected() {
+		return fmt.Errorf("client not connected")
+	}
+
+	if client.Store.ID == nil {
+		return fmt.Errorf("client not logged in")
+	}
+
+	// Build revoke message for status (chat is status@broadcast, sender is our own JID)
+	revokeMsg := client.BuildRevoke(types.StatusBroadcastJID, client.Store.ID.ToNonAD(), messageID)
+	
+	_, err = client.SendMessage(context.Background(), types.StatusBroadcastJID, revokeMsg)
+	if err != nil {
+		return fmt.Errorf("failed to revoke status on WhatsApp: %w", err)
+	}
+
+	// Delete from local analytics database immediately
+	err = s.Store.Driver.DeleteStatusMessage(messageID)
+	if err != nil {
+		fmt.Printf("[DeleteStory] WhatsApp status deleted, but failed to remove from local DB: %v\n", err)
+	}
+
+	return nil
 }
 
 // SetStatusMessage updates the user's about/status text

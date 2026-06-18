@@ -474,6 +474,21 @@ func (d *SQLiteDriver) GetStatusAnalytics(token string) ([]StatusAnalytics, erro
 	return results, nil
 }
 
+// DeleteStatusMessage removes a status message and its associated views and replies
+func (d *SQLiteDriver) DeleteStatusMessage(messageID string) error {
+	// Foreign key cascade is assumed to be enabled, but just in case, we delete manually
+	_, err := d.db.Exec(`DELETE FROM status_replies WHERE message_id = ?`, messageID)
+	if err != nil {
+		return err
+	}
+	_, err = d.db.Exec(`DELETE FROM status_views WHERE message_id = ?`, messageID)
+	if err != nil {
+		return err
+	}
+	_, err = d.db.Exec(`DELETE FROM status_messages WHERE message_id = ?`, messageID)
+	return err
+}
+
 // CleanupOldStatuses removes statuses older than 'days' to prevent DB bloat
 func (d *SQLiteDriver) CleanupOldStatuses(days int) error {
 	d.mu.Lock()

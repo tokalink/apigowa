@@ -596,6 +596,7 @@ func (s *Server) RegisterRoutes(r *gin.Engine) {
 		api.POST("/check-number", s.CheckNumberHandler)
 		api.POST("/presence", s.SendPresenceHandler)
 		api.GET("/status-analytics", s.StatusAnalyticsHandler)
+		api.DELETE("/story", s.DeleteStoryHandler)
 
 		// Admin Routes
 		api.POST("/setup", s.SetupHandler)
@@ -773,4 +774,33 @@ func (s *Server) StatusAnalyticsHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": true, "data": analytics})
+}
+
+type DeleteStoryRequest struct {
+	Token     FlexString `json:"token"`
+	MessageID string     `json:"message_id"`
+}
+
+func (s *Server) DeleteStoryHandler(c *gin.Context) {
+	var req DeleteStoryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Token == "" || req.MessageID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token and message_id are required"})
+		return
+	}
+
+	err := s.Service.DeleteStory(string(req.Token), req.MessageID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Story deleted successfully",
+	})
 }
