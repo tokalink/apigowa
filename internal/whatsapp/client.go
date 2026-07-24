@@ -1001,8 +1001,29 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 	if err != nil {
 		errStr := strings.ToLower(err.Error())
 
-		// Auto-reconnect on 400 error logic
-		if strings.Contains(errStr, "server returned error 400") || strings.Contains(errStr, "bad request") {
+		// Auto-reconnect on timeout or disconnected error
+		if strings.Contains(errStr, "deadline exceeded") || strings.Contains(errStr, "timeout") {
+			fmt.Printf("[SendMessage] Received timeout/deadline exceeded for token %s. Attempting 1x auto-reconnect...\n", token)
+			client.Disconnect()
+			time.Sleep(1 * time.Second)
+			
+			if reconnectErr := client.Connect(); reconnectErr == nil {
+				// Retry sending
+				fmt.Printf("[SendMessage] Reconnect success, retrying send for token %s...\n", token)
+				
+				// Recreate context for retry
+				retryCtx, retryCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer retryCancel()
+				
+				resp, err = client.SendMessage(retryCtx, recipient, msg)
+				if err != nil {
+					fmt.Printf("[SendMessage] Send failed again with timeout after reconnect for %s.\n", token)
+					// Let it fall through to normal error handling
+				}
+			} else {
+				fmt.Printf("[SendMessage] Reconnect failed for %s after timeout: %v.\n", token, reconnectErr)
+			}
+		} else if strings.Contains(errStr, "server returned error 400") || strings.Contains(errStr, "bad request") {
 			fmt.Printf("[SendMessage] Received 400 error for token %s. Attempting 1x auto-reconnect...\n", token)
 			client.Disconnect()
 			time.Sleep(1 * time.Second)
