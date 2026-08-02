@@ -656,19 +656,6 @@ func (s *Server) RegisterRoutes(r *gin.Engine) {
 		api.GET("/login", s.LoginHandler) // Legacy/QR
 		api.GET("/login-sse", s.LoginStreamHandler)
 		api.POST("/pair", s.PairPhoneHandler)
-		api.POST("/send", s.SendMessageHandler)
-		api.POST("/send-button", s.SendButtonHandler)
-		api.POST("/send-poll", s.SendPollHandler)
-		api.GET("/contacts", s.GetContactsHandler)
-		api.GET("/groups", s.GetGroupsHandler)
-		api.POST("/logout", s.LogoutHandler)
-		api.POST("/reconnect", s.ReconnectHandler)
-		api.Any("/status", s.StatusHandler) // Support GET & POST
-		api.POST("/profile/status", s.SetStatusMessageHandler)
-		api.POST("/check-number", s.CheckNumberHandler)
-		api.POST("/presence", s.SendPresenceHandler)
-		api.GET("/status-analytics", s.StatusAnalyticsHandler)
-		api.DELETE("/story", s.DeleteStoryHandler)
 
 		// Admin Routes
 		api.POST("/setup", s.SetupHandler)
@@ -679,6 +666,20 @@ func (s *Server) RegisterRoutes(r *gin.Engine) {
 		authorized := api.Group("/")
 		authorized.Use(s.APIKeyMiddleware())
 		{
+			authorized.POST("/send", s.SendMessageHandler)
+			authorized.POST("/send-button", s.SendButtonHandler)
+			authorized.POST("/send-poll", s.SendPollHandler)
+			authorized.GET("/contacts", s.GetContactsHandler)
+			authorized.GET("/groups", s.GetGroupsHandler)
+			authorized.POST("/logout", s.LogoutHandler)
+			authorized.POST("/reconnect", s.ReconnectHandler)
+			authorized.Any("/status", s.StatusHandler) // Support GET & POST
+			authorized.POST("/profile/status", s.SetStatusMessageHandler)
+			authorized.POST("/check-number", s.CheckNumberHandler)
+			authorized.POST("/presence", s.SendPresenceHandler)
+			authorized.GET("/status-analytics", s.StatusAnalyticsHandler)
+			authorized.DELETE("/story", s.DeleteStoryHandler)
+
 			authorized.POST("/start", s.StartSessionHandler)
 			authorized.POST("/qrcode", s.QRCodeHandler)
 			authorized.GET("/qrcode", s.QRCodeHandler)
@@ -692,7 +693,7 @@ func (s *Server) RegisterRoutes(r *gin.Engine) {
 
 	// Legacy support or direct access
 	r.GET("/login", s.LoginHandler)
-	r.POST("/send", s.SendMessageHandler)
+	r.Group("/").Use(s.APIKeyMiddleware()).POST("/send", s.SendMessageHandler)
 }
 
 // ... Handler Definitions ...

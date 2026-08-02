@@ -13,6 +13,7 @@ import (
 	"apiwago/internal/api"
 	"apiwago/internal/web"
 	"apiwago/internal/whatsapp"
+	"apiwago/pkg/license"
 	"apiwago/pkg/store"
 
 	"github.com/gin-gonic/gin"
@@ -112,6 +113,9 @@ func runForeground() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using defaults")
 	}
+
+	// Validate License Key
+	license.Validate()
 
 	// Ensure store directory exists
 	dbPath := os.Getenv("DB_PATH")

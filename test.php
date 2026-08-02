@@ -31,10 +31,15 @@ $data = [
     ]
 ];
 
+$apiKey = 'RAHASIA'; // Sesuaikan dengan nilai APIKEY di file .env kamu
+
 $ch = curl_init($url);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+curl_setopt($ch, CURLOPT_HTTPHEADER, [
+    'Content-Type: application/json',
+    'apikey: ' . $apiKey
+]);
 curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
 
 echo "Mengirim request ke {$url}...\n\n";
