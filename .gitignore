@@ -5,3 +5,6 @@
 store.*
 /api.*
 /media
+/wajs/node_modules
+/wajs/store.db
+/wajs/sessions

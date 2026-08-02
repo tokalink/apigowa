@@ -19,6 +19,7 @@ import (
 
 	"github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -630,29 +631,64 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 
 	switch v := evt.(type) {
 	case *events.Message:
-		// Handle LID (Privacy ID) resolution
+		// Handle LID (Privacy ID) resolution for Chat and Sender
+		chatJID := v.Info.Chat
 		senderJID := v.Info.Sender
-		if senderJID.Server == "lid" {
-			// Get client to access store
-			client, _ := s.GetClient(token)
+
+		// Get client to access store
+		client, _ := s.GetClient(token)
+
+		if chatJID.Server == "lid" || senderJID.Server == "lid" {
 			if client != nil && client.Store.LIDs != nil {
-				pnJID, err := client.Store.LIDs.GetPNForLID(context.Background(), senderJID)
-				if err == nil && !pnJID.IsEmpty() {
-					fmt.Printf("[Webhook] Resolved LID %s to Phone %s\n", senderJID, pnJID)
-					senderJID = pnJID
-				} else {
-					fmt.Printf("[Webhook] Failed to resolve LID %s: %v\n", senderJID, err)
+				if chatJID.Server == "lid" {
+					pnJID, err := client.Store.LIDs.GetPNForLID(context.Background(), chatJID)
+					if err == nil && !pnJID.IsEmpty() {
+						fmt.Printf("[Webhook] Resolved Chat LID %s to Phone %s\n", chatJID, pnJID)
+						chatJID = pnJID
+					}
 				}
+				if senderJID.Server == "lid" {
+					pnJID, err := client.Store.LIDs.GetPNForLID(context.Background(), senderJID)
+					if err == nil && !pnJID.IsEmpty() {
+						fmt.Printf("[Webhook] Resolved Sender LID %s to Phone %s\n", senderJID, pnJID)
+						senderJID = pnJID
+					}
+				}
+			}
+
+			// Fallback 1: For 1-on-1 chat, if chatJID is still LID but senderJID is phone JID (s.whatsapp.net)
+			if !v.Info.IsGroup && chatJID.Server == "lid" && senderJID.Server == "s.whatsapp.net" {
+				chatJID = types.NewJID(senderJID.User, types.DefaultUserServer)
+				fmt.Printf("[Webhook] Fallback Chat LID -> Phone: %s\n", chatJID)
+			}
+			// Fallback 2: For 1-on-1 chat, if senderJID is still LID but chatJID is phone JID (s.whatsapp.net)
+			if !v.Info.IsGroup && senderJID.Server == "lid" && chatJID.Server == "s.whatsapp.net" {
+				senderJID = types.NewJID(chatJID.User, types.DefaultUserServer)
+				fmt.Printf("[Webhook] Fallback Sender LID -> Phone: %s\n", senderJID)
 			}
 		}
 
-		// Get phone number from sender (remove @s.whatsapp.net suffix)
+		// Determine phone number for webhook payload.
+		// For 1-on-1 chat, the customer's phone number is chatJID.User (whether fromMe is true or false).
+		// For group chat, chatJID.User is the group ID, while senderJID.User is the individual sender.
+		// For outgoing messages (fromMe=true), we want the recipient's phone number (chatJID.User).
 		phone := senderJID.User
+		if !v.Info.IsGroup || v.Info.IsFromMe {
+			phone = chatJID.User
+		}
 
-		// Get message text
+		// Get message text or media caption
 		msgText := v.Message.GetConversation()
 		if msgText == "" {
-			msgText = v.Message.GetExtendedTextMessage().GetText()
+			if ext := v.Message.GetExtendedTextMessage(); ext != nil {
+				msgText = ext.GetText()
+			} else if img := v.Message.GetImageMessage(); img != nil {
+				msgText = img.GetCaption()
+			} else if vid := v.Message.GetVideoMessage(); vid != nil {
+				msgText = vid.GetCaption()
+			} else if doc := v.Message.GetDocumentMessage(); doc != nil {
+				msgText = doc.GetCaption()
+			}
 		}
 
 		// Determine message type
@@ -671,11 +707,11 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 			msgType = "extendedText"
 		}
 
-		// Build original message structure for "messages" field
+		// Build original message structure for "messages" field using resolved chatJID
 		originalMessage := []map[string]interface{}{
 			{
 				"key": map[string]interface{}{
-					"remoteJid": v.Info.Chat.String(),
+					"remoteJid": chatJID.String(),
 					"fromMe":    v.Info.IsFromMe,
 					"id":        v.Info.ID,
 				},
@@ -693,6 +729,10 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 			"token":     token,
 			"event":     "message",
 			"phone":     phone,
+			"to":        chatJID.User,
+			"chat":      chatJID.String(),
+			"remoteJid": chatJID.String(),
+			"sender":    senderJID.User,
 			"fromMe":    v.Info.IsFromMe,
 			"pushName":  v.Info.PushName,
 			"text":      msgText,
@@ -703,8 +743,6 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 		}
 
 		// Process Media if exists
-		// Get client for download
-		client, _ := s.GetClient(token)
 		if client != nil {
 			mediaURL, err := s.processMedia(token, client, v)
 			if err != nil {
@@ -1073,6 +1111,179 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 	}
 
 	fmt.Printf("[SendMessage] Success. ID: %s\n", resp.ID)
+	return resp.ID, nil
+}
+
+type ButtonOptions struct {
+	Title   string   `json:"title"`
+	Text    string   `json:"text"`
+	Footer  string   `json:"footer"`
+	Buttons []Button `json:"buttons"`
+}
+
+type Button struct {
+	ID       string `json:"id"`
+	Text     string `json:"text"`
+	Type     string `json:"type"`      // reply, cta_url, cta_copy
+	URL      string `json:"url"`       // for cta_url
+	CopyCode string `json:"copy_code"` // for cta_copy
+}
+
+func (s *Service) SendButtonMessage(token, to string, options ButtonOptions) (string, error) {
+	client, err := s.GetClient(token)
+	if err != nil {
+		return "", err
+	}
+	if !client.IsConnected() {
+		return "", fmt.Errorf("client not logged in")
+	}
+
+	if !strings.Contains(to, "@") {
+		normalized := NormalizePhone(to)
+		if normalized == "" {
+			return "", fmt.Errorf("phone number is empty or invalid")
+		}
+		to = normalized + "@s.whatsapp.net"
+	}
+	recipient, err := types.ParseJID(to)
+	if err != nil {
+		return "", fmt.Errorf("invalid recipient JID: %w", err)
+	}
+
+	var buttons []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton
+	for _, btn := range options.Buttons {
+		var paramsJSON string
+		btnType := btn.Type
+		if btnType == "" || btnType == "reply" {
+			btnType = "quick_reply"
+			paramsJSON = fmt.Sprintf(`{"display_text":"%s","id":"%s"}`, btn.Text, btn.ID)
+		} else if btnType == "cta_url" {
+			paramsJSON = fmt.Sprintf(`{"display_text":"%s","url":"%s"}`, btn.Text, btn.URL)
+		} else if btnType == "cta_copy" {
+			paramsJSON = fmt.Sprintf(`{"display_text":"%s","id":"%s","copy_code":"%s"}`, btn.Text, btn.ID, btn.CopyCode)
+		}
+
+		buttons = append(buttons, &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+			Name:             proto.String(btnType),
+			ButtonParamsJSON: proto.String(paramsJSON),
+		})
+	}
+
+	interactiveMsg := &waE2E.InteractiveMessage{
+		Header: &waE2E.InteractiveMessage_Header{
+			HasMediaAttachment: proto.Bool(false),
+		},
+		Body: &waE2E.InteractiveMessage_Body{
+			Text: proto.String(options.Text),
+		},
+		Footer: &waE2E.InteractiveMessage_Footer{
+			Text: proto.String(options.Footer),
+		},
+		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+				Buttons: buttons,
+			},
+		},
+	}
+	if options.Title != "" {
+		interactiveMsg.Header.Title = proto.String(options.Title)
+	}
+
+	msg := &waE2E.Message{
+		ViewOnceMessage: &waE2E.FutureProofMessage{
+			Message: &waE2E.Message{
+				MessageContextInfo: &waE2E.MessageContextInfo{
+					DeviceListMetadataVersion: proto.Int32(2),
+					DeviceListMetadata:        &waE2E.DeviceListMetadata{},
+				},
+				InteractiveMessage: interactiveMsg,
+			},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	bizNode := waBinary.Node{
+		Tag:   "biz",
+		Attrs: waBinary.Attrs{},
+		Content: []waBinary.Node{
+			{
+				Tag: "interactive",
+				Attrs: waBinary.Attrs{
+					"type": "native_flow",
+					"v":    "1",
+				},
+				Content: []waBinary.Node{
+					{
+						Tag: "native_flow",
+						Attrs: waBinary.Attrs{
+							"name": "mixed",
+							"v":    "9",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	additionalNodes := []waBinary.Node{bizNode}
+	if recipient.Server != "g.us" {
+		additionalNodes = append(additionalNodes, waBinary.Node{
+			Tag: "bot",
+			Attrs: waBinary.Attrs{
+				"biz_bot": "1",
+			},
+		})
+	}
+
+	extra := whatsmeow.SendRequestExtra{
+		AdditionalNodes: &additionalNodes,
+	}
+
+	resp, err := client.SendMessage(ctx, recipient, msg, extra)
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
+type PollOptions struct {
+	Name            string   `json:"name"`
+	Options         []string `json:"options"`
+	SelectableCount int      `json:"selectableCount"`
+}
+
+func (s *Service) SendPollMessage(token, to string, options PollOptions) (string, error) {
+	client, err := s.GetClient(token)
+	if err != nil {
+		return "", err
+	}
+	if !client.IsConnected() {
+		return "", fmt.Errorf("client not logged in")
+	}
+
+	if !strings.Contains(to, "@") {
+		normalized := NormalizePhone(to)
+		if normalized == "" {
+			return "", fmt.Errorf("phone number is empty or invalid")
+		}
+		to = normalized + "@s.whatsapp.net"
+	}
+	recipient, err := types.ParseJID(to)
+	if err != nil {
+		return "", fmt.Errorf("invalid recipient JID: %w", err)
+	}
+
+	pollMsg := client.BuildPollCreation(options.Name, options.Options, options.SelectableCount)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := client.SendMessage(ctx, recipient, pollMsg)
+	if err != nil {
+		return "", err
+	}
 	return resp.ID, nil
 }
 

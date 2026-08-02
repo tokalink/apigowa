@@ -229,6 +229,76 @@ func (s *Server) SendMessageHandler(c *gin.Context) {
 	})
 }
 
+type SendButtonRequest struct {
+	Token   FlexString             `json:"token"`
+	Phone   string                 `json:"phone"`
+	Options whatsapp.ButtonOptions `json:"options"`
+}
+
+func (s *Server) SendButtonHandler(c *gin.Context) {
+	var req SendButtonRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Token == "" || req.Phone == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token and phone are required"})
+		return
+	}
+
+	msgID, err := s.Service.SendButtonMessage(string(req.Token), req.Phone, req.Options)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "status": false})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"phone":   req.Phone,
+		"message": "Terkirim",
+		"data": gin.H{
+			"id":     msgID,
+			"status": true,
+		},
+	})
+}
+
+type SendPollRequest struct {
+	Token   FlexString           `json:"token"`
+	Phone   string               `json:"phone"`
+	Options whatsapp.PollOptions `json:"options"`
+}
+
+func (s *Server) SendPollHandler(c *gin.Context) {
+	var req SendPollRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Token == "" || req.Phone == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token and phone are required"})
+		return
+	}
+
+	msgID, err := s.Service.SendPollMessage(string(req.Token), req.Phone, req.Options)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "status": false})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"phone":   req.Phone,
+		"message": "Terkirim",
+		"data": gin.H{
+			"id":     msgID,
+			"status": true,
+		},
+	})
+}
+
 type PairPhoneRequest struct {
 	Token FlexString `json:"token"`
 	Phone string     `json:"phone"`
@@ -587,6 +657,8 @@ func (s *Server) RegisterRoutes(r *gin.Engine) {
 		api.GET("/login-sse", s.LoginStreamHandler)
 		api.POST("/pair", s.PairPhoneHandler)
 		api.POST("/send", s.SendMessageHandler)
+		api.POST("/send-button", s.SendButtonHandler)
+		api.POST("/send-poll", s.SendPollHandler)
 		api.GET("/contacts", s.GetContactsHandler)
 		api.GET("/groups", s.GetGroupsHandler)
 		api.POST("/logout", s.LogoutHandler)
