@@ -1,23 +1,10 @@
 @echo off
 setlocal
 
-:: Versioning logic
-if not exist VERSION echo 1.0.1+0 > VERSION
-for /f "tokens=1,2 delims=+" %%a in (VERSION) do (
-    set SEMVER=%%a
-    set /a BUILD_NUM=%%b+1
-)
-set VERSION=%SEMVER%(+%BUILD_NUM%)
-echo %SEMVER%+%BUILD_NUM% > VERSION
-
 echo ==========================================
-echo Building apiwago version: %VERSION%
+echo Running build_all.ps1 to build all platforms...
 echo ==========================================
-
-:: Build linux binary for docker
-set GOOS=linux
-set GOARCH=amd64
-go build -buildvcs=false -ldflags "-X main.version=%VERSION%" -o builds/apiwago-linux-amd64 ./cmd/api
+powershell -ExecutionPolicy Bypass -File .\build_all.ps1
 
 if %ERRORLEVEL% NEQ 0 (
     echo Build failed!
@@ -25,8 +12,14 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b %ERRORLEVEL%
 )
 
-:: Build docker image from root
+echo ==========================================
+echo Building Docker image...
+echo ==========================================
 docker build -t tokalink/wago:v3 -t tokalink/wago:latest .
+
+echo ==========================================
+echo Pushing Docker image...
+echo ==========================================
 docker push tokalink/wago:v3
 docker push tokalink/wago:latest
 
