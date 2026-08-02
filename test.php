@@ -4,11 +4,11 @@ $url = 'http://localhost:7900/api/send-button';
 
 $data = [
     "token" => "111", // Sesuai dengan token yang baru saja login di log terminal
-    "phone" => "6285232843165",
+    "phone" => "6285649073770",
     "options" => [
         "title" => "Axera API Cloud",
-        "text" => "Halo! Ini adalah uji coba pengiriman Interactive Buttons langsung dari Go (whatsmeow) kita sendiri. Jual 30K/Bulan Gimana?",
-        "footer" => "Support By Tokalink",
+        "text" => "Halo! Ini adalah uji coba template Interactive Buttons",
+        "footer" => "Support By Axera",
         "buttons" => [
             [
                 "id" => "btn-1",
@@ -17,21 +17,21 @@ $data = [
             ],
             [
                 "id" => "btn-2",
-                "text" => "Buka CloudChat",
+                "text" => "Buka Axera",
                 "type" => "cta_url",
-                "url" => "https://app.cloudchat.id/"
+                "url" => "https://app.axera.id/"
             ],
             [
                 "id" => "btn-3",
-                "text" => "Copy Kode",
+                "text" => "Copy OTP",
                 "type" => "cta_copy",
-                "copy_code" => "WAJS-12345"
+                "copy_code" => "12345"
             ]
         ]
     ]
 ];
 
-$apiKey = 'RAHASIA'; // Sesuaikan dengan nilai APIKEY di file .env kamu
+$apiKey = 'your-api-key-here'; // Sesuaikan dengan nilai APIKEY di file .env kamu
 
 $ch = curl_init($url);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);

@@ -46,6 +46,10 @@ DB_PATH=store.db           # Path file SQLite
 # DB_USER=postgres         # User PostgreSQL (jika pakai postgres)
 # DB_PASSWORD=secret       # Password PostgreSQL (jika pakai postgres)
 # DB_NAME=apiwago          # Nama DB PostgreSQL (jika pakai postgres)
+
+# License Configuration (Wajib)
+LICENSE_KEY=APIWAGO-xxxxxxxxxxxx
+LICENSE_SERVER_URL=https://api.tokalink.id/validate-license # URL Server Lisensi
 ```
 
 ### 4. Run
@@ -58,6 +62,25 @@ DB_PATH=store.db           # Path file SQLite
 ./apiwago install
 ./apiwago start
 ```
+
+## 🔑 Sistem Lisensi & Server (Monetisasi)
+
+ApiWago kini dilengkapi dengan sistem lisensi bawaan untuk keperluan monetisasi. Aplikasi tidak akan dapat berjalan (atau akan otomatis mati) apabila lisensi tidak valid, kadaluarsa, atau dicabut.
+
+**Fitur Sistem Lisensi:**
+- **Validasi Terpusat:** Mengecek keabsahan kunci (`LICENSE_KEY`) langsung ke server lisensi.
+- **Heartbeat & Auto-Kill:** Klien melakukan *ping* setiap 4 menit. Jika server lisensi menghapus lisensi tersebut, aplikasi klien akan otomatis terhenti (*crash*).
+- **Device & IP Tracking:** Mendeteksi batas limit penggunaan (*device limit*) dan melacak alamat IP klien.
+
+### Menjalankan Server Lisensi Mandiri
+Jika Anda ingin menjadi penyedia/vendor ApiWago, Anda bisa menjalankan **Server Lisensi** (berada di folder `lisensi`):
+```bash
+cd lisensi
+go run main.go db.go
+```
+Atau gunakan hasil *build* (`lisensi-linux-amd64` / `lisensi-windows-amd64.exe`). Server ini menyediakan **Web Dashboard (UI)** di port `8080` (Default Login: `admin` / `admin123`) untuk Anda mengatur durasi lisensi dan batas maksimal *device*.
+
+---
 
 ## 📖 CLI Commands
 
