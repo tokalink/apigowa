@@ -688,6 +688,19 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 				msgText = vid.GetCaption()
 			} else if doc := v.Message.GetDocumentMessage(); doc != nil {
 				msgText = doc.GetCaption()
+			} else if tbr := v.Message.GetTemplateButtonReplyMessage(); tbr != nil {
+				msgText = tbr.GetSelectedDisplayText()
+			} else if ir := v.Message.GetInteractiveResponseMessage(); ir != nil {
+				if nri := ir.GetNativeFlowResponseMessage(); nri != nil {
+					msgText = nri.GetName()
+					if paramsJSON := nri.GetParamsJSON(); paramsJSON != "" {
+						msgText += " | " + paramsJSON
+					}
+				}
+			} else if lrm := v.Message.GetListResponseMessage(); lrm != nil {
+				msgText = lrm.GetTitle()
+			} else if brm := v.Message.GetButtonsResponseMessage(); brm != nil {
+				msgText = brm.GetSelectedDisplayText()
 			}
 		}
 
@@ -705,6 +718,8 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 			msgType = "sticker"
 		} else if v.Message.GetExtendedTextMessage() != nil {
 			msgType = "extendedText"
+		} else if v.Message.GetTemplateButtonReplyMessage() != nil || v.Message.GetInteractiveResponseMessage() != nil || v.Message.GetButtonsResponseMessage() != nil || v.Message.GetListResponseMessage() != nil {
+			msgType = "interactiveResponse"
 		}
 
 		// Build original message structure for "messages" field using resolved chatJID
@@ -1114,6 +1129,117 @@ func (s *Service) SendMessage(token, to, text string) (string, error) {
 	return resp.ID, nil
 }
 
+type ListOptions struct {
+	Title       string        `json:"title"`
+	Description string        `json:"text"`       // Usually main body text
+	Footer      string        `json:"footer"`
+	ButtonText  string        `json:"buttonText"`
+	Sections    []ListSection `json:"sections"`
+}
+
+type ListSection struct {
+	Title string    `json:"title"`
+	Rows  []ListRow `json:"rows"`
+}
+
+type ListRow struct {
+	ID          string `json:"id"`
+	Header      string `json:"header,omitempty"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+}
+
+func (s *Service) SendListMessage(token, to string, options ListOptions) (string, error) {
+	client, err := s.GetClient(token)
+	if err != nil {
+		return "", err
+	}
+	if !client.IsConnected() {
+		return "", fmt.Errorf("client not logged in")
+	}
+
+	if !strings.Contains(to, "@") {
+		normalized := NormalizePhone(to)
+		if normalized == "" {
+			return "", fmt.Errorf("phone number is empty or invalid")
+		}
+		to = normalized + "@s.whatsapp.net"
+	}
+	recipient, err := types.ParseJID(to)
+	if err != nil {
+		return "", fmt.Errorf("invalid recipient JID: %w", err)
+	}
+
+	listType := waE2E.ListMessage_UNKNOWN
+	if len(options.Sections) > 0 {
+		listType = waE2E.ListMessage_SINGLE_SELECT
+	}
+
+	var sections []*waE2E.ListMessage_Section
+	for _, sec := range options.Sections {
+		var rows []*waE2E.ListMessage_Row
+		for _, r := range sec.Rows {
+			rowTitle := r.Title
+			rowDesc := r.Description
+			rowID := r.ID
+			row := &waE2E.ListMessage_Row{
+				Title: &rowTitle,
+				RowID: &rowID,
+			}
+			if rowDesc != "" {
+				row.Description = &rowDesc
+			}
+			rows = append(rows, row)
+		}
+		secTitle := sec.Title
+		sections = append(sections, &waE2E.ListMessage_Section{
+			Title: &secTitle,
+			Rows:  rows,
+		})
+	}
+
+	btnText := options.ButtonText
+	if btnText == "" {
+		btnText = "Menu"
+	}
+	
+	title := options.Title
+	desc := options.Description
+	footer := options.Footer
+
+	listMsg := &waE2E.ListMessage{
+		Title:       &title,
+		Description: &desc,
+		FooterText:  &footer,
+		ButtonText:  &btnText,
+		ListType:    &listType,
+		Sections:    sections,
+	}
+
+	msg := &waE2E.Message{
+		ViewOnceMessage: &waE2E.FutureProofMessage{
+			Message: &waE2E.Message{
+				MessageContextInfo: &waE2E.MessageContextInfo{
+					DeviceListMetadataVersion: proto.Int32(2),
+					DeviceListMetadata:        &waE2E.DeviceListMetadata{},
+				},
+				ListMessage: listMsg,
+			},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := client.SendMessage(ctx, recipient, msg)
+	if err != nil {
+		return "", err
+	}
+	
+	fmt.Printf("[SendListMessage] Success. ID: %s\n", resp.ID)
+	return resp.ID, nil
+}
+
 type ButtonOptions struct {
 	Title   string   `json:"title"`
 	Text    string   `json:"text"`
@@ -1181,7 +1307,8 @@ func (s *Service) SendButtonMessage(token, to string, options ButtonOptions) (st
 		},
 		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
 			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
-				Buttons: buttons,
+				Buttons:        buttons,
+				MessageVersion: proto.Int32(1),
 			},
 		},
 	}

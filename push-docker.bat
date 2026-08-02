@@ -26,8 +26,8 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 :: Build docker image from root
-docker build -t tokalink/wago:v2 -t tokalink/wago:latest .
-docker push tokalink/wago:v2
+docker build -t tokalink/wago:v3 -t tokalink/wago:latest .
+docker push tokalink/wago:v3
 docker push tokalink/wago:latest
 
 echo ==========================================

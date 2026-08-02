@@ -270,6 +270,19 @@ type SendPollRequest struct {
 	Options whatsapp.PollOptions `json:"options"`
 }
 
+type SendListRequest struct {
+	Token   FlexString           `json:"token"`
+	Phone   string               `json:"phone"`
+	Options whatsapp.ListOptions `json:"options"`
+}
+
+func (s *Server) SendListHandler(c *gin.Context) {
+	c.JSON(http.StatusBadRequest, gin.H{
+		"status": false,
+		"error":  "Fitur List Message (Select Menu) saat ini tidak tersedia (unavailable) karena pembatasan resmi dari WhatsApp untuk akun non-Business Cloud API. Silakan gunakan fitur Polling (/api/send-poll) sebagai alternatif.",
+	})
+}
+
 func (s *Server) SendPollHandler(c *gin.Context) {
 	var req SendPollRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -669,6 +682,7 @@ func (s *Server) RegisterRoutes(r *gin.Engine) {
 			authorized.POST("/send", s.SendMessageHandler)
 			authorized.POST("/send-button", s.SendButtonHandler)
 			authorized.POST("/send-poll", s.SendPollHandler)
+			authorized.POST("/send-list", s.SendListHandler)
 			authorized.GET("/contacts", s.GetContactsHandler)
 			authorized.GET("/groups", s.GetGroupsHandler)
 			authorized.POST("/logout", s.LogoutHandler)

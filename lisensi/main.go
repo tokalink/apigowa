@@ -19,7 +19,7 @@ var db *LicenseDB
 func generateRandomKey() string {
 	b := make([]byte, 8)
 	rand.Read(b)
-	return fmt.Sprintf("APIWAGO-%s", hex.EncodeToString(b))
+	return fmt.Sprintf("axerasoft-%s", hex.EncodeToString(b))
 }
 
 func main() {
@@ -85,7 +85,7 @@ func dashboardHandler(c *gin.Context) {
 	for _, l := range licenses {
 		used, _ := db.GetUsedDeviceCount(l.LicenseKey)
 		status := "Aktif"
-		
+
 		expiresText := "Unlimited"
 		if l.ExpiresAt.Valid {
 			expiresText = l.ExpiresAt.Time.Format("02 Jan 2006")
