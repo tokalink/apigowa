@@ -4,7 +4,7 @@ $url = 'http://localhost:7900/api/send-button';
 
 $data = [
     "token" => "111", // Sesuai dengan token yang baru saja login di log terminal
-    "phone" => "085232843165",
+    "phone" => "120363019295574541@g.us",
     "options" => [
         "title" => "Axera API Cloud",
         "text" => "Halo! Ini adalah uji coba template Interactive Buttons",

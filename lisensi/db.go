@@ -16,6 +16,7 @@ type License struct {
 	ID          int
 	LicenseKey  string
 	DeviceLimit int
+	AccountLimit int
 	CreatedAt   time.Time
 	ExpiresAt   sql.NullTime // Can be null if unlimited
 }
@@ -36,6 +37,7 @@ func InitDB(filepath string) (*LicenseDB, error) {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			license_key TEXT UNIQUE NOT NULL,
 			device_limit INTEGER NOT NULL,
+			account_limit INTEGER DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			expires_at DATETIME
 		);
@@ -43,6 +45,9 @@ func InitDB(filepath string) (*LicenseDB, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Menambahkan kolom account_limit jika sebelumnya belum ada (ignore error)
+	db.Exec(`ALTER TABLE licenses ADD COLUMN account_limit INTEGER DEFAULT 0`)
 
 	// Buat tabel devices untuk tracking penggunaan device per lisensi
 	_, err = db.Exec(`
@@ -65,17 +70,17 @@ func InitDB(filepath string) (*LicenseDB, error) {
 	return &LicenseDB{db: db}, nil
 }
 
-func (l *LicenseDB) CreateLicense(key string, limit int, expiresAt sql.NullTime) error {
-	_, err := l.db.Exec(`INSERT INTO licenses (license_key, device_limit, expires_at) VALUES (?, ?, ?)`,
-		key, limit, expiresAt)
+func (l *LicenseDB) CreateLicense(key string, deviceLimit, accountLimit int, expiresAt sql.NullTime) error {
+	_, err := l.db.Exec(`INSERT INTO licenses (license_key, device_limit, account_limit, expires_at) VALUES (?, ?, ?, ?)`,
+		key, deviceLimit, accountLimit, expiresAt)
 	return err
 }
 
 func (l *LicenseDB) GetLicense(key string) (*License, error) {
-	row := l.db.QueryRow(`SELECT id, license_key, device_limit, created_at, expires_at FROM licenses WHERE license_key = ?`, key)
+	row := l.db.QueryRow(`SELECT id, license_key, device_limit, account_limit, created_at, expires_at FROM licenses WHERE license_key = ?`, key)
 
 	var lic License
-	err := row.Scan(&lic.ID, &lic.LicenseKey, &lic.DeviceLimit, &lic.CreatedAt, &lic.ExpiresAt)
+	err := row.Scan(&lic.ID, &lic.LicenseKey, &lic.DeviceLimit, &lic.AccountLimit, &lic.CreatedAt, &lic.ExpiresAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("license not found")
@@ -86,7 +91,7 @@ func (l *LicenseDB) GetLicense(key string) (*License, error) {
 }
 
 func (l *LicenseDB) GetAllLicenses() ([]License, error) {
-	rows, err := l.db.Query(`SELECT id, license_key, device_limit, created_at, expires_at FROM licenses ORDER BY id DESC`)
+	rows, err := l.db.Query(`SELECT id, license_key, device_limit, account_limit, created_at, expires_at FROM licenses ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +100,7 @@ func (l *LicenseDB) GetAllLicenses() ([]License, error) {
 	var licenses []License
 	for rows.Next() {
 		var lic License
-		if err := rows.Scan(&lic.ID, &lic.LicenseKey, &lic.DeviceLimit, &lic.CreatedAt, &lic.ExpiresAt); err != nil {
+		if err := rows.Scan(&lic.ID, &lic.LicenseKey, &lic.DeviceLimit, &lic.AccountLimit, &lic.CreatedAt, &lic.ExpiresAt); err != nil {
 			return nil, err
 		}
 		licenses = append(licenses, lic)

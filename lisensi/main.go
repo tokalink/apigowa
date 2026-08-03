@@ -79,6 +79,7 @@ func dashboardHandler(c *gin.Context) {
 		IsOnline       bool
 		LastOnlineText string
 		LastIP         string
+		AccountLimitText string
 	}
 
 	var views []LicenseView
@@ -112,6 +113,11 @@ func dashboardHandler(c *gin.Context) {
 			lastIP = "-"
 		}
 
+		accountLimitText := "Unlimited"
+		if l.AccountLimit > 0 {
+			accountLimitText = strconv.Itoa(l.AccountLimit)
+		}
+
 		views = append(views, LicenseView{
 			License:        l,
 			UsedCount:      used,
@@ -120,6 +126,7 @@ func dashboardHandler(c *gin.Context) {
 			IsOnline:       isOnline,
 			LastOnlineText: lastOnlineText,
 			LastIP:         lastIP,
+			AccountLimitText: accountLimitText,
 		})
 	}
 
@@ -130,11 +137,17 @@ func dashboardHandler(c *gin.Context) {
 
 func generateLicenseHandler(c *gin.Context) {
 	limitStr := c.PostForm("device_limit")
+	accountLimitStr := c.PostForm("account_limit")
 	durationStr := c.PostForm("duration")
 
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit < 1 {
 		limit = 1 // default
+	}
+
+	accountLimit, err := strconv.Atoi(accountLimitStr)
+	if err != nil || accountLimit < 0 {
+		accountLimit = 0 // default unlimited
 	}
 
 	var expiresAt sql.NullTime
@@ -150,7 +163,7 @@ func generateLicenseHandler(c *gin.Context) {
 	}
 
 	key := generateRandomKey()
-	err = db.CreateLicense(key, limit, expiresAt)
+	err = db.CreateLicense(key, limit, accountLimit, expiresAt)
 	if err != nil {
 		c.String(http.StatusInternalServerError, "Gagal membuat lisensi")
 		return
@@ -174,8 +187,9 @@ type ValidateRequest struct {
 }
 
 type ValidateResponse struct {
-	Valid   bool   `json:"valid"`
-	Message string `json:"message"`
+	Valid        bool   `json:"valid"`
+	Message      string `json:"message"`
+	AccountLimit int    `json:"account_limit"`
 }
 
 func validateLicenseHandler(c *gin.Context) {
@@ -224,5 +238,5 @@ func validateLicenseHandler(c *gin.Context) {
 		db.RegisterDevice(req.LicenseKey, req.DeviceID, clientIP)
 	}
 
-	c.JSON(http.StatusOK, ValidateResponse{Valid: true, Message: "License active"})
+	c.JSON(http.StatusOK, ValidateResponse{Valid: true, Message: "License active", AccountLimit: lic.AccountLimit})
 }

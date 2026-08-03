@@ -2,6 +2,7 @@ package api
 
 import (
 	"apiwago/internal/whatsapp"
+	"apiwago/pkg/license"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -23,6 +24,34 @@ type Server struct {
 
 func NewServer(service *whatsapp.Service) *Server {
 	return &Server{Service: service}
+}
+
+func (s *Server) checkAccountLimit(token string) error {
+	limit := license.GetAccountLimit()
+	if limit <= 0 {
+		return nil // Unlimited
+	}
+
+	// Cek apakah token ini sudah ada sebelumnya (artinya cuma reconnect/login ulang)
+	devices, _, err := s.Service.Store.GetDevices(1, 0, token, "")
+	if err == nil && len(devices) > 0 {
+		// Kalau token sama persis ditemukan, izinkan (karena tidak menambah total limit akun)
+		if devices[0].Token == token {
+			return nil
+		}
+	}
+
+	// Kalau token baru, cek total seluruh akun yang sudah terdaftar
+	_, total, err := s.Service.Store.GetDevices(1, 0, "", "")
+	if err != nil {
+		return fmt.Errorf("gagal mengecek limit akun: %v", err)
+	}
+
+	if total >= limit {
+		return fmt.Errorf("Account limit reached for this license (Max: %d accounts)", limit)
+	}
+
+	return nil
 }
 
 // FlexString handles both JSON string and number for string fields
@@ -87,6 +116,11 @@ func (s *Server) LoginHandler(c *gin.Context) {
 		return
 	}
 
+	if err := s.checkAccountLimit(token); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
 	qrBytes, err := s.Service.Login(token)
 	if err != nil {
 		if err.Error() == "loggedin" {
@@ -104,6 +138,11 @@ func (s *Server) LoginStreamHandler(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+		return
+	}
+
+	if err := s.checkAccountLimit(token); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -321,6 +360,11 @@ func (s *Server) PairPhoneHandler(c *gin.Context) {
 	var req PairPhoneRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.checkAccountLimit(string(req.Token)); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 

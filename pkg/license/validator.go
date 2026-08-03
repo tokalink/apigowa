@@ -15,30 +15,40 @@ import (
 )
 
 type LicenseResponse struct {
-	Valid   bool   `json:"valid"`
-	Message string `json:"message"`
+	Valid        bool   `json:"valid"`
+	Message      string `json:"message"`
+	AccountLimit int    `json:"account_limit"`
 }
 
 const cacheFile = ".wago_sys.dat"
 
 type LicenseCache struct {
-	Valid     bool   `json:"valid"`
-	Timestamp int64  `json:"timestamp"`
-	Signature string `json:"signature"`
+	Valid        bool   `json:"valid"`
+	Timestamp    int64  `json:"timestamp"`
+	Signature    string `json:"signature"`
+	AccountLimit int    `json:"account_limit"`
 }
 
-func generateSignature(valid bool, timestamp int64, licenseKey, deviceID string) string {
-	data := fmt.Sprintf("%v:%d:%s:%s", valid, timestamp, licenseKey, deviceID)
+var GlobalAccountLimit int = 0 // 0 means unlimited
+
+// GetAccountLimit returns the maximum number of WA accounts allowed by the license.
+func GetAccountLimit() int {
+	return GlobalAccountLimit
+}
+
+func generateSignature(valid bool, timestamp int64, licenseKey, deviceID string, accountLimit int) string {
+	data := fmt.Sprintf("%v:%d:%s:%s:%d", valid, timestamp, licenseKey, deviceID, accountLimit)
 	hash := sha256.Sum256([]byte(data))
 	return hex.EncodeToString(hash[:])
 }
 
-func saveCache(licenseKey, deviceID string) {
+func saveCache(licenseKey, deviceID string, accountLimit int) {
 	ts := time.Now().Unix()
 	cache := LicenseCache{
-		Valid:     true,
-		Timestamp: ts,
-		Signature: generateSignature(true, ts, licenseKey, deviceID),
+		Valid:        true,
+		Timestamp:    ts,
+		Signature:    generateSignature(true, ts, licenseKey, deviceID, accountLimit),
+		AccountLimit: accountLimit,
 	}
 	b, _ := json.Marshal(cache)
 	encoded := base64.StdEncoding.EncodeToString(b)
@@ -66,7 +76,7 @@ func loadCache(licenseKey, deviceID string) bool {
 	}
 	
 	// Verifikasi signature agar tidak bisa dipalsukan
-	expectedSig := generateSignature(cache.Valid, cache.Timestamp, licenseKey, deviceID)
+	expectedSig := generateSignature(cache.Valid, cache.Timestamp, licenseKey, deviceID, cache.AccountLimit)
 	if cache.Signature != expectedSig {
 		return false
 	}
@@ -76,6 +86,7 @@ func loadCache(licenseKey, deviceID string) bool {
 		return false
 	}
 
+	GlobalAccountLimit = cache.AccountLimit
 	return cache.Valid
 }
 
@@ -156,7 +167,8 @@ func Validate() {
 					log.Fatalf("[FATAL] LISENSI TIDAK VALID: %s\nSilakan hubungi WA 085232843165 / khoirulh1610@gmail.com", licResp.Message)
 				} else {
 					// Valid! Simpan ke cache
-					saveCache(licenseKey, deviceID)
+					GlobalAccountLimit = licResp.AccountLimit
+					saveCache(licenseKey, deviceID, licResp.AccountLimit)
 					fmt.Printf("[INFO] Lisensi berhasil divalidasi dengan server! Sistem siap dijalankan.\n")
 				}
 			}
@@ -179,9 +191,17 @@ func Validate() {
 				resp.Body.Close()
 				if err == nil {
 					var licResp LicenseResponse
-					if err := json.Unmarshal(bodyBytes, &licResp); err == nil && !licResp.Valid {
-						clearCache()
-						log.Fatalf("[FATAL] LISENSI DIBATALKAN OLEH ADMIN: %s\nSilakan hubungi WA 085232843165 / khoirulh1610@gmail.com", licResp.Message)
+					if err := json.Unmarshal(bodyBytes, &licResp); err == nil {
+						if !licResp.Valid {
+							clearCache()
+							log.Fatalf("[FATAL] LISENSI DIBATALKAN OLEH ADMIN: %s\nSilakan hubungi WA 085232843165 / khoirulh1610@gmail.com", licResp.Message)
+						} else {
+							// Update AccountLimit in case it was changed by admin
+							if GlobalAccountLimit != licResp.AccountLimit {
+								GlobalAccountLimit = licResp.AccountLimit
+								saveCache(licenseKey, deviceID, licResp.AccountLimit)
+							}
+						}
 					}
 				}
 			} else {

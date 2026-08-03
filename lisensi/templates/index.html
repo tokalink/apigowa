@@ -32,9 +32,14 @@
                             </select>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">Limit Penggunaan Device</label>
+                            <label class="form-label">Limit Penggunaan Server</label>
                             <input type="number" name="device_limit" class="form-control" value="1" min="1" required>
-                            <small class="text-muted">Berapa server yang bisa pakai lisensi ini.</small>
+                            <small class="text-muted">Batas maksimal komputer/VPS yang diizinkan memakai 1 lisensi ini secara bersamaan.</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Limit Akun WhatsApp</label>
+                            <input type="number" name="account_limit" class="form-control" value="0" min="0" required>
+                            <small class="text-muted">Batas maksimal akun WA yang bisa discan (0 = Unlimited).</small>
                         </div>
                         <button type="submit" class="btn btn-primary w-100">Generate Key</button>
                     </form>
@@ -49,8 +54,8 @@
                             <thead class="table-light">
                                 <tr>
                                     <th>License Key</th>
-                                    <th>Device Limit</th>
-                                    <th>Terpakai</th>
+                                    <th>Limit Server</th>
+                                    <th>Limit Akun</th>
                                     <th>Expired</th>
                                     <th>Status Lisensi</th>
                                     <th>Status Online</th>
@@ -63,8 +68,8 @@
                                 {{ range .Licenses }}
                                 <tr>
                                     <td><code class="user-select-all">{{ .LicenseKey }}</code></td>
-                                    <td>{{ .DeviceLimit }}</td>
-                                    <td>{{ .UsedCount }}</td>
+                                    <td>{{ .UsedCount }} / {{ .DeviceLimit }}</td>
+                                    <td>{{ .AccountLimitText }}</td>
                                     <td>{{ .ExpiresText }}</td>
                                     <td>
                                         {{ if eq .Status "Aktif" }}
