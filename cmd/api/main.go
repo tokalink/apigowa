@@ -148,6 +148,19 @@ func runForeground() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.Default()
+	
+	// CORS Middleware to allow browser UI testing
+	r.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, apikey, Authorization")
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+		c.Next()
+	})
+	
 	server.RegisterRoutes(r)
 
 	// Serve Frontend

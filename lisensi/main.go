@@ -71,15 +71,20 @@ func dashboardHandler(c *gin.Context) {
 	}
 
 	// Menghitung status penggunaan
-	type LicenseView struct {
-		License
-		UsedCount      int
-		Status         string
-		ExpiresText    string
+	type DeviceView struct {
+		DeviceID       string
+		IPAddress      string
 		IsOnline       bool
 		LastOnlineText string
-		LastIP         string
+	}
+
+	type LicenseView struct {
+		License
+		UsedCount        int
+		Status           string
+		ExpiresText      string
 		AccountLimitText string
+		ConnectedServers []DeviceView
 	}
 
 	var views []LicenseView
@@ -99,18 +104,27 @@ func dashboardHandler(c *gin.Context) {
 			status = "Penuh (Limit Device)"
 		}
 
-		lastUsed, lastIP, _ := db.GetLastUsed(l.LicenseKey)
-		isOnline := false
-		lastOnlineText := "Belum Pernah"
-		if lastUsed.Valid {
-			// Menggunakan zona waktu lokal untuk memformat tampilan
-			lastOnlineText = lastUsed.Time.Local().Format("02 Jan 15:04:05")
-			if time.Since(lastUsed.Time) < 5*time.Minute {
-				isOnline = true
+		dbDevices, _ := db.GetDevicesForLicense(l.LicenseKey)
+		var connectedServers []DeviceView
+		for _, dd := range dbDevices {
+			isOnline := false
+			lastOnlineText := "Belum Pernah"
+			if !dd.LastUsed.IsZero() {
+				lastOnlineText = dd.LastUsed.Local().Format("02 Jan 15:04:05")
+				if time.Since(dd.LastUsed) < 5*time.Minute {
+					isOnline = true
+				}
 			}
-		}
-		if lastIP == "" {
-			lastIP = "-"
+			ip := dd.IPAddress
+			if ip == "" {
+				ip = "-"
+			}
+			connectedServers = append(connectedServers, DeviceView{
+				DeviceID:       dd.DeviceID,
+				IPAddress:      ip,
+				IsOnline:       isOnline,
+				LastOnlineText: lastOnlineText,
+			})
 		}
 
 		accountLimitText := "Unlimited"
@@ -119,14 +133,12 @@ func dashboardHandler(c *gin.Context) {
 		}
 
 		views = append(views, LicenseView{
-			License:        l,
-			UsedCount:      used,
-			Status:         status,
-			ExpiresText:    expiresText,
-			IsOnline:       isOnline,
-			LastOnlineText: lastOnlineText,
-			LastIP:         lastIP,
+			License:          l,
+			UsedCount:        used,
+			Status:           status,
+			ExpiresText:      expiresText,
 			AccountLimitText: accountLimitText,
+			ConnectedServers: connectedServers,
 		})
 	}
 

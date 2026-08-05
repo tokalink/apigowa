@@ -4,101 +4,111 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>License Server Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { background-color: #f8f9fa; }
-        .card { border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: none; }
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .modal-overlay {
+            background-color: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(4px);
+        }
     </style>
 </head>
-<body>
-    <nav class="navbar navbar-dark bg-dark mb-4">
-        <div class="container">
-            <span class="navbar-brand mb-0 h1">ApiWaGo License Server 🔑</span>
+<body class="bg-gray-50 min-h-screen text-gray-800">
+    <nav class="bg-gray-900 text-white shadow-md mb-8">
+        <div class="container mx-auto px-4 py-4">
+            <span class="text-xl font-bold tracking-wide">ApiWaGo License Server 🔑</span>
         </div>
     </nav>
 
-    <div class="container">
-        <div class="row mb-4">
-            <div class="col-md-4">
-                <div class="card p-4">
-                    <h5 class="card-title">Buat Lisensi Baru</h5>
-                    <form action="/generate" method="POST">
-                        <div class="mb-3">
-                            <label class="form-label">Masa Berlaku</label>
-                            <select name="duration" class="form-select">
+    <div class="container mx-auto px-4 pb-12">
+        <div class="flex flex-col lg:flex-row gap-6">
+            
+            <!-- Sidebar: Buat Lisensi -->
+            <div class="w-full lg:w-1/3">
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                    <h5 class="text-lg font-semibold mb-4 text-gray-900">Buat Lisensi Baru</h5>
+                    <form action="/generate" method="POST" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Masa Berlaku</label>
+                            <select name="duration" class="w-full rounded-lg border-gray-300 border px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all">
                                 <option value="1_month">1 Bulan</option>
                                 <option value="1_year">1 Tahun</option>
                                 <option value="unlimited">Seumur Hidup (Unlimited)</option>
                             </select>
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label">Limit Penggunaan Server</label>
-                            <input type="number" name="device_limit" class="form-control" value="1" min="1" required>
-                            <small class="text-muted">Batas maksimal komputer/VPS yang diizinkan memakai 1 lisensi ini secara bersamaan.</small>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Limit Penggunaan Server</label>
+                            <input type="number" name="device_limit" class="w-full rounded-lg border-gray-300 border px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all" value="1" min="1" required>
+                            <p class="mt-1 text-xs text-gray-500">Batas maksimal komputer/VPS yang diizinkan memakai 1 lisensi ini secara bersamaan.</p>
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label">Limit Akun WhatsApp</label>
-                            <input type="number" name="account_limit" class="form-control" value="0" min="0" required>
-                            <small class="text-muted">Batas maksimal akun WA yang bisa discan (0 = Unlimited).</small>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Limit Akun WhatsApp</label>
+                            <input type="number" name="account_limit" class="w-full rounded-lg border-gray-300 border px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all" value="0" min="0" required>
+                            <p class="mt-1 text-xs text-gray-500">Batas maksimal akun WA yang bisa discan (0 = Unlimited).</p>
                         </div>
-                        <button type="submit" class="btn btn-primary w-100">Generate Key</button>
+                        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200">
+                            Generate Key
+                        </button>
                     </form>
                 </div>
             </div>
 
-            <div class="col-md-8">
-                <div class="card p-4">
-                    <h5 class="card-title">Daftar Lisensi</h5>
-                    <div class="table-responsive">
-                        <table class="table table-hover align-middle">
-                            <thead class="table-light">
+            <!-- Main: Daftar Lisensi -->
+            <div class="w-full lg:w-2/3">
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="p-6 border-b border-gray-100">
+                        <h5 class="text-lg font-semibold text-gray-900">Daftar Lisensi</h5>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm whitespace-nowrap">
+                            <thead class="bg-gray-50 text-gray-600 font-medium border-b border-gray-200">
                                 <tr>
-                                    <th>License Key</th>
-                                    <th>Limit Server</th>
-                                    <th>Limit Akun</th>
-                                    <th>Expired</th>
-                                    <th>Status Lisensi</th>
-                                    <th>Status Online</th>
-                                    <th>Terakhir Online</th>
-                                    <th>IP Server</th>
-                                    <th>Aksi</th>
+                                    <th class="px-6 py-3">License Key</th>
+                                    <th class="px-6 py-3">Limit Server</th>
+                                    <th class="px-6 py-3">Limit Akun</th>
+                                    <th class="px-6 py-3">Expired</th>
+                                    <th class="px-6 py-3">Status Lisensi</th>
+                                    <th class="px-6 py-3">Aksi</th>
                                 </tr>
                             </thead>
-                            <tbody>
+                            <tbody class="divide-y divide-gray-100">
                                 {{ range .Licenses }}
-                                <tr>
-                                    <td><code class="user-select-all">{{ .LicenseKey }}</code></td>
-                                    <td>{{ .UsedCount }} / {{ .DeviceLimit }}</td>
-                                    <td>{{ .AccountLimitText }}</td>
-                                    <td>{{ .ExpiresText }}</td>
-                                    <td>
+                                <tr class="hover:bg-gray-50 transition-colors">
+                                    <td class="px-6 py-4">
+                                        <code class="bg-gray-100 text-pink-600 px-2 py-1 rounded text-xs select-all">{{ .LicenseKey }}</code>
+                                    </td>
+                                    <td class="px-6 py-4 text-gray-700">{{ .UsedCount }} / {{ .DeviceLimit }}</td>
+                                    <td class="px-6 py-4 text-gray-700">{{ .AccountLimitText }}</td>
+                                    <td class="px-6 py-4 text-gray-700">{{ .ExpiresText }}</td>
+                                    <td class="px-6 py-4">
                                         {{ if eq .Status "Aktif" }}
-                                            <span class="badge bg-success">Aktif</span>
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Aktif</span>
                                         {{ else if eq .Status "Expired" }}
-                                            <span class="badge bg-danger">Expired</span>
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Expired</span>
                                         {{ else }}
-                                            <span class="badge bg-warning text-dark">{{ .Status }}</span>
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">{{ .Status }}</span>
                                         {{ end }}
                                     </td>
-                                    <td>
-                                        {{ if .IsOnline }}
-                                            <span class="badge bg-success">Online</span>
-                                        {{ else }}
-                                            <span class="badge bg-secondary">Offline</span>
-                                        {{ end }}
-                                    </td>
-                                    <td class="small text-muted">{{ .LastOnlineText }}</td>
-                                    <td><span class="badge bg-light text-dark border">{{ .LastIP }}</span></td>
-                                    <td>
-                                        <form action="/delete" method="POST" class="d-inline" onsubmit="return confirm('Hapus lisensi ini secara permanen? Client yang memakainya akan mati.');">
-                                            <input type="hidden" name="license_key" value="{{ .LicenseKey }}">
-                                            <button type="submit" class="btn btn-sm btn-outline-danger">Hapus</button>
-                                        </form>
+                                    <td class="px-6 py-4">
+                                        <div class="flex space-x-2">
+                                            <button onclick="openModal('{{ .LicenseKey }}')" class="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors">
+                                                Detail Server
+                                            </button>
+                                            <form action="/delete" method="POST" class="inline" onsubmit="return confirm('Yakin ingin menghapus lisensi ini?');">
+                                                <input type="hidden" name="license_key" value="{{ .LicenseKey }}">
+                                                <button type="submit" class="inline-flex items-center px-3 py-1.5 border border-red-200 text-xs font-medium rounded shadow-sm text-red-600 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors">
+                                                    Hapus
+                                                </button>
+                                            </form>
+                                        </div>
                                     </td>
                                 </tr>
                                 {{ else }}
                                 <tr>
-                                    <td colspan="6" class="text-center text-muted py-4">Belum ada lisensi yang dibuat.</td>
+                                    <td colspan="6" class="px-6 py-12 text-center text-gray-500">Belum ada lisensi yang dibuat.</td>
                                 </tr>
                                 {{ end }}
                             </tbody>
@@ -108,5 +118,92 @@
             </div>
         </div>
     </div>
+
+    <!-- Modals for Server Details -->
+    {{ range .Licenses }}
+    <div id="modal-{{ .LicenseKey }}" class="fixed inset-0 z-50 hidden modal-overlay overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <!-- Modal panel -->
+            <div class="inline-block align-bottom bg-white rounded-xl text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl w-full">
+                <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4 border-b border-gray-100">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
+                            Daftar Server <span class="text-sm font-normal text-gray-500 ml-2">({{ .LicenseKey }})</span>
+                        </h3>
+                        <button onclick="closeModal('{{ .LicenseKey }}')" class="text-gray-400 hover:text-gray-500 focus:outline-none">
+                            <span class="sr-only">Close</span>
+                            <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="bg-gray-50 p-4 sm:p-6">
+                    <div class="overflow-hidden shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
+                        <table class="min-w-full divide-y divide-gray-300">
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th scope="col" class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6">Device ID (Hostname)</th>
+                                    <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">IP Server</th>
+                                    <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Status Online</th>
+                                    <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Terakhir Online</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-200 bg-white">
+                                {{ range .ConnectedServers }}
+                                <tr>
+                                    <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900 sm:pl-6">
+                                        <code class="bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs">{{ .DeviceID }}</code>
+                                    </td>
+                                    <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{{ .IPAddress }}</td>
+                                    <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                                        {{ if .IsOnline }}
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Online</span>
+                                        {{ else }}
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">Offline</span>
+                                        {{ end }}
+                                    </td>
+                                    <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{{ .LastOnlineText }}</td>
+                                </tr>
+                                {{ else }}
+                                <tr>
+                                    <td colspan="4" class="whitespace-nowrap px-3 py-8 text-sm text-gray-500 text-center">Belum ada server yang menggunakan lisensi ini.</td>
+                                </tr>
+                                {{ end }}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="bg-white px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse border-t border-gray-100">
+                    <button type="button" onclick="closeModal('{{ .LicenseKey }}')" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm transition-colors">
+                        Tutup
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    {{ end }}
+
+    <script>
+        function openModal(id) {
+            document.getElementById('modal-' + id).classList.remove('hidden');
+            document.body.style.overflow = 'hidden'; // Prevent background scrolling
+        }
+        function closeModal(id) {
+            document.getElementById('modal-' + id).classList.add('hidden');
+            document.body.style.overflow = 'auto'; // Restore background scrolling
+        }
+
+        // Close modal when clicking outside of it
+        window.onclick = function(event) {
+            if (event.target.classList.contains('modal-overlay')) {
+                const modals = document.querySelectorAll('.modal-overlay');
+                modals.forEach(modal => {
+                    modal.classList.add('hidden');
+                });
+                document.body.style.overflow = 'auto';
+            }
+        }
+    </script>
 </body>
 </html>

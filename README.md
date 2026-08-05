@@ -11,6 +11,7 @@ WhatsApp Multi-Device API Gateway - REST API untuk integrasi WhatsApp menggunaka
 - 🪝 **Webhook** - Notifikasi pesan masuk ke URL eksternal
 - 🏷️ **Workspace** - Organisasi device berdasarkan group/team
 - 📞 **Auto Reject Call** - Tolak panggilan otomatis dengan pesan kustom
+- 🎙️ **Voice Call (VoIP)** - Melakukan panggilan suara keluar (Outbound Call) dengan Text-to-Speech, MP3, atau Real-Time Mic via WebSocket
 - 🖼️ **Media Support** - Kirim gambar dan dokumen
 - 🛠️ **Smart Number Formatting** - Pencegahan double country-code (62) saat pengecekan nomor otomatis
 - ⚙️ **Service Mode** - Jalankan sebagai system service (Windows/Linux/macOS)
@@ -151,7 +152,15 @@ Semua request wajib menggunakan `Content-Type: application/json` kecuali endpoin
 | GET | `/api/login` | Mendapatkan QR Code berupa raw image (Legacy) |
 | GET | `/api/login-sse` | Mendapatkan QR Code secara real-time via Server-Sent Events (SSE) |
 
-#### 3. Admin & Dashboard Routes
+#### 3. Voice Call & Streaming (VoIP)
+*Endpoint khusus untuk fitur Voice Call berbasis WebRTC/PCM.*
+
+| Method | Endpoint | Keterangan |
+|--------|----------|------------|
+| POST | `/api/call` | Melakukan panggilan suara keluar (Outbound Call) |
+| WS   | `/api/call/stream`| WebSocket untuk Real-Time Microphone & Status Pemantauan Panggilan |
+
+#### 4. Admin & Dashboard Routes
 *Digunakan oleh Web Dashboard untuk keperluan login admin.*
 
 | Method | Endpoint | Keterangan |
@@ -210,8 +219,6 @@ curl -X POST http://localhost:8080/api/send \
   }'
 ```
 
-### Send Media Example
-
 ```bash
 curl -X POST http://localhost:8080/api/send \
   -H "apikey: YOUR_API_KEY" \
@@ -224,6 +231,22 @@ curl -X POST http://localhost:8080/api/send \
     "file_name": "image.jpg"
   }'
 ```
+
+### 5. Outbound Voice Call (TTS / MP3)
+
+Melakukan panggilan telepon keluar. Jika menggunakan file audio, Anda bisa mengirim path lokal atau URL.
+
+```bash
+curl -X POST http://localhost:8080/api/call \
+  -H "apikey: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "token": "my-token",
+    "to": "628123456789",
+    "call_audio_file": "https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=id&q=Halo+ini+adalah+panggilan+otomatis"
+  }'
+```
+> **Tip:** Tersedia antarmuka *tester* WebRTC bawaan di folder `examples/call.html` untuk mencoba integrasi Real-Time Microphone 2-Arah via WebSocket.
 
 ## 🐳 Menjalankan dengan Docker
 
@@ -328,10 +351,11 @@ bash build_all.sh
 ```
 apiwago/
 ├── cmd/api/           # Entry point & CLI
+├── examples/          # Script contoh (Real-Time VoIP Tester UI, PHP Webhook, dll)
 ├── internal/
-│   ├── api/           # HTTP handlers
+│   ├── api/           # HTTP handlers & WebSocket stream
 │   ├── web/           # Frontend templates
-│   └── whatsapp/      # WhatsApp service
+│   └── whatsapp/      # WhatsApp service (Messaging & WebRTC Audio)
 ├── pkg/store/         # Database layer
 ├── builds/            # Compiled binaries
 ├── .env               # Configuration

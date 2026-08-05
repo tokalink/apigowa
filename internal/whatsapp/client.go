@@ -34,11 +34,15 @@ import (
 
 	// "golang.org/x/image/webp" // Standard image library doesn't support webp decoding easily without external lib, sticking to png/jpg for now or just generic decode
 	_ "image/gif"
+	
+	"github.com/purpshell/meowcaller"
 )
 
 type Service struct {
 	mu               sync.RWMutex
 	clientPool       *ClientPool
+	callClients      sync.Map // meowcaller clients per token
+	activeCalls      sync.Map // Map of call_id to *meowcaller.Call
 	RejectionConfigs map[string]RejectionConfig
 	QRCodes          map[string]string
 	Store            *store.Store
@@ -55,6 +59,9 @@ type RejectionConfig struct {
 	RejectCall         string   `json:"reject_call"`          // "Y" or "N"
 	RejectExcludePhone []string `json:"reject_exclude_phone"` // List of JIDs or phones
 	RejectMessage      string   `json:"reject_message"`
+	CallBehavior       string   `json:"call_behavior"`        // "answer", "reject", "ignore" (defaults to reject if RejectCall is Y)
+	CallAudioFile      string   `json:"call_audio_file"`      // Path to MP3 file for "answer" mode
+	InteractiveWebhook string   `json:"interactive_webhook"`
 }
 
 func NewService(s *store.Store, webhookURL string) *Service {
@@ -292,6 +299,67 @@ func (s *Service) GetClient(token string) (*whatsmeow.Client, error) {
 
 	// Add to pool
 	s.clientPool.Put(token, client)
+
+	// Wrap with meowcaller for VoIP
+	callClient := meowcaller.NewClient(client)
+	callClient.OnIncomingCall(func(call *meowcaller.Call) {
+		s.mu.RLock()
+		config := s.RejectionConfigs[token]
+		s.mu.RUnlock()
+
+		behavior := config.CallBehavior
+		if behavior == "" && config.RejectCall == "Y" {
+			behavior = "reject"
+		}
+
+		if behavior == "answer" {
+			call.Answer()
+			// Register call for streaming
+			s.RegisterCall(call.ID(), call)
+
+			if config.InteractiveWebhook != "" {
+				// Interactive AI Mode
+				StartInteractiveSession(call, config.CallAudioFile, config.InteractiveWebhook)
+			} else if config.CallAudioFile != "" {
+				if mp3, err := meowcaller.MP3File(config.CallAudioFile); err == nil {
+					player := call.Play(mp3)
+					player.OnFinish(func() {
+						call.Hangup()
+					})
+				} else {
+					fmt.Printf("Failed to load MP3 for call answer: %v\n", err)
+					call.Hangup()
+				}
+			} else {
+				// If answered but no audio file provided, hang up immediately
+				call.Hangup()
+			}
+		} else if behavior == "forward" {
+			// Register call so websocket can answer it later
+			s.RegisterCall(call.ID(), call)
+
+			// Send webhook event for incoming call
+			payload := map[string]interface{}{
+				"token":     token,
+				"event":     "incoming_call",
+				"call_id":   call.ID(),
+				"from":      call.Peer().String(),
+				"update_at": time.Now().Format("2006-01-02 15:04:05"),
+			}
+			
+			// Find webhook URL
+			webhookURL, err := s.Store.GetWebhook(token)
+			if err != nil || webhookURL == "" {
+				webhookURL = s.WebhookURL
+			}
+			if webhookURL != "" {
+				s.postWebhook(webhookURL, payload)
+			}
+		} else if behavior == "ignore" {
+			// Do nothing
+		}
+	})
+	s.callClients.Store(token, callClient)
 
 	return client, nil
 }
@@ -784,6 +852,10 @@ func (s *Service) handleWebhookEvent(token string, evt interface{}) {
 		return
 	}
 
+	s.postWebhook(webhookURL, payload)
+}
+
+func (s *Service) postWebhook(webhookURL string, payload interface{}) {
 	jsonBody, err := json.Marshal(payload)
 	if err != nil {
 		fmt.Printf("Failed to marshal webhook payload: %v\n", err)
@@ -2201,4 +2273,22 @@ func (s *Service) SendPresence(token, to, state string) error {
 	}
 
 	return client.SendChatPresence(context.Background(), recipient, chatState, chatMedia)
+}
+
+// RegisterCall adds a call to the activeCalls map
+func (s *Service) RegisterCall(callID string, call *meowcaller.Call) {
+	s.activeCalls.Store(callID, call)
+	
+	// Remove from map when call ends
+	call.OnEnd(func(reason string) {
+		s.activeCalls.Delete(callID)
+	})
+}
+
+// GetActiveCall retrieves an active call by ID
+func (s *Service) GetActiveCall(callID string) (*meowcaller.Call, bool) {
+	if val, ok := s.activeCalls.Load(callID); ok {
+		return val.(*meowcaller.Call), true
+	}
+	return nil, false
 }

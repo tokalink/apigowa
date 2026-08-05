@@ -78,6 +78,9 @@ type StartSessionRequest struct {
 	RejectCall         string     `json:"reject_call"`
 	RejectExcludePhone []string   `json:"reject_exclude_phone"`
 	RejectMessage      string     `json:"reject_message"`
+	CallBehavior       string     `json:"call_behavior"`
+	CallAudioFile      string     `json:"call_audio_file"`
+	InteractiveWebhook string     `json:"interactive_webhook"`
 }
 
 func (s *Server) StartSessionHandler(c *gin.Context) {
@@ -96,6 +99,9 @@ func (s *Server) StartSessionHandler(c *gin.Context) {
 		RejectCall:         req.RejectCall,
 		RejectExcludePhone: req.RejectExcludePhone,
 		RejectMessage:      req.RejectMessage,
+		CallBehavior:       req.CallBehavior,
+		CallAudioFile:      req.CallAudioFile,
+		InteractiveWebhook: req.InteractiveWebhook,
 	}
 
 	if err := s.Service.StartSession(string(req.Token), config); err != nil {
@@ -265,6 +271,38 @@ func (s *Server) SendMessageHandler(c *gin.Context) {
 			"id":     msgID,
 			"status": true,
 		},
+	})
+}
+
+type CallRequest struct {
+	Token              FlexString `json:"token"`
+	To                 string     `json:"to"`
+	CallAudioFile      string     `json:"call_audio_file"`
+	InteractiveWebhook string     `json:"interactive_webhook"`
+}
+
+func (s *Server) CallHandler(c *gin.Context) {
+	var req CallRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Token == "" || req.To == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token and to are required"})
+		return
+	}
+
+	callID, err := s.Service.MakeCall(string(req.Token), req.To, req.CallAudioFile, req.InteractiveWebhook)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": true, 
+		"message": "call initiated", 
+		"call_id": callID,
 	})
 }
 
@@ -719,6 +757,7 @@ func (s *Server) RegisterRoutes(r *gin.Engine) {
 		api.GET("/check-setup", s.CheckSetupHandler)
 		api.POST("/login-admin", s.LoginAdminHandler)
 		api.POST("/logout-admin", s.LogoutAdminHandler)
+		api.GET("/call/stream", s.StreamCallHandler)
 
 		authorized := api.Group("/")
 		authorized.Use(s.APIKeyMiddleware())
@@ -739,6 +778,7 @@ func (s *Server) RegisterRoutes(r *gin.Engine) {
 			authorized.DELETE("/story", s.DeleteStoryHandler)
 
 			authorized.POST("/start", s.StartSessionHandler)
+			authorized.POST("/call", s.CallHandler)
 			authorized.POST("/qrcode", s.QRCodeHandler)
 			authorized.GET("/qrcode", s.QRCodeHandler)
 			authorized.GET("/devices", s.ListDevicesHandler) // Protected

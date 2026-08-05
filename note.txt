@@ -1,0 +1,18 @@
+Dari hasil riset mengenai tren platform komunikasi (seperti Twilio, Meta Business API, dll) di 2024, ada beberapa fitur "Killer" tingkat Enterprise yang belum kita miliki di apiwago.
+
+Mengingat kita sudah berhasil menembus tembok WebRTC/VoIP WhatsApp, potensi kita sangat luas! Berikut adalah ide-ide fitur menarik yang bisa kita kembangkan selanjutnya:
+
+🎙️ 1. AI Voice Customer Service (Voicebot Real-Time)
+Saat ini kita baru bisa mengirim suara dari Mic atau MP3. Bayangkan jika kita menyambungkan aliran suara masuk (dari penelepon) langsung ke Speech-to-Text (seperti OpenAI Whisper), lalu memprosesnya dengan ChatGPT, dan membalasnya dengan TTS secara Real-Time! Aplikasi Anda akan menjadi robot Customer Service via telepon WhatsApp yang bisa ngobrol dua arah dengan manusia 24/7 layaknya asisten virtual (seperti fitur Conversational AI milik Twilio).
+
+⏺️ 2. Automatic Call Recording (Perekam Panggilan)
+Fitur wajib untuk layanan pelanggan (QA) atau CRM. Karena kita memiliki akses ke stream audio mentah dari penelepon maupun penerima, kita bisa mencampurnya (mix) dan menyimpannya sebagai file .wav atau .mp3 secara otomatis setiap kali panggilan selesai, lalu mengirimkannya via Webhook.
+
+📢 3. Voice Blasting / OTP via Voice (Panggilan Massal)
+Sama seperti broadcast pesan teks, tapi untuk telepon. Pengguna cukup memasukkan 100 nomor dan 1 file MP3. Sistem apiwago akan menelepon nomor-nomor tersebut satu per satu (atau paralel) untuk menyampaikan pesan suara promosi, peringatan darurat, atau pembacaan kode OTP.
+
+🎛️ 4. Fitur PABX & Call Routing (Call Center)
+Ketika seseorang menelepon nomor WhatsApp bisnis Anda, apiwago yang akan mengangkat lebih dulu, lalu memutar musik tunggu (hold music). Kemudian, sistem akan meneruskan/membunyikan (routing) panggilan tersebut ke web dashboard agen CS yang sedang online. Agen mana pun yang klik "Angkat" di browsernya akan langsung terhubung ke pelanggan.
+
+🛍️ 5. Rich Messaging (Buttons, Lists, & Catalogs)
+Dari sisi chat teks, saat ini kita baru mendukung teks dan media biasa. API WhatsApp (bahkan unofficial) sebenarnya bisa dipaksa untuk mengirim pesan interaktif seperti tombol (Quick Replies), menu List, hingga WhatsApp Flows & Katalog Produk. Ini akan meningkatkan konversi penjualan penggunanya drastis.

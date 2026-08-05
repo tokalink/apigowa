@@ -21,6 +21,12 @@ type License struct {
 	ExpiresAt   sql.NullTime // Can be null if unlimited
 }
 
+type RegisteredDevice struct {
+	DeviceID  string
+	LastUsed  time.Time
+	IPAddress string
+}
+
 func InitDB(filepath string) (*LicenseDB, error) {
 	db, err := sql.Open("sqlite", filepath)
 	if err != nil {
@@ -147,6 +153,42 @@ func (l *LicenseDB) GetLastUsed(key string) (sql.NullTime, string, error) {
         }
 	}
 	return lastUsed, ipAddress.String, err
+}
+
+func (l *LicenseDB) GetDevicesForLicense(key string) ([]RegisteredDevice, error) {
+	rows, err := l.db.Query(`SELECT device_id, last_used, ip_address FROM devices WHERE license_key = ? ORDER BY last_used DESC`, key)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var devices []RegisteredDevice
+	for rows.Next() {
+		var d RegisteredDevice
+		var lastUsedStr sql.NullString
+		var ipAddr sql.NullString
+		if err := rows.Scan(&d.DeviceID, &lastUsedStr, &ipAddr); err != nil {
+			return nil, err
+		}
+		if ipAddr.Valid {
+			d.IPAddress = ipAddr.String
+		} else {
+			d.IPAddress = "-"
+		}
+		if lastUsedStr.Valid && lastUsedStr.String != "" {
+			t, parseErr := time.Parse("2006-01-02 15:04:05", lastUsedStr.String)
+			if parseErr == nil {
+				d.LastUsed = t
+			} else {
+				t2, parseErr2 := time.Parse(time.RFC3339, lastUsedStr.String)
+				if parseErr2 == nil {
+					d.LastUsed = t2
+				}
+			}
+		}
+		devices = append(devices, d)
+	}
+	return devices, nil
 }
 
 func (l *LicenseDB) RegisterDevice(key, deviceID, ip string) error {

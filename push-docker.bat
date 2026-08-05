@@ -15,12 +15,12 @@ if %ERRORLEVEL% NEQ 0 (
 echo ==========================================
 echo Building Docker image...
 echo ==========================================
-docker build -t tokalink/wago:v3 -t tokalink/wago:latest .
+docker build -t tokalink/wago:v4 -t tokalink/wago:latest .
 
 echo ==========================================
 echo Pushing Docker image...
 echo ==========================================
-docker push tokalink/wago:v3
+docker push tokalink/wago:v4
 docker push tokalink/wago:latest
 
 echo ==========================================

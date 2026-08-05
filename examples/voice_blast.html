@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Voice Blaster / Voice OTP Tester</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 40px;
+            background-color: #f0f2f5;
+            color: #1c1e21;
+        }
+
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        h2 {
+            margin-top: 0;
+            color: #1877f2;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+
+        input[type="text"],
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccd0d5;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        button {
+            background: #1877f2;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            width: 100%;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #166fe5;
+        }
+
+        button:disabled {
+            background: #9cb4d8;
+            cursor: not-allowed;
+        }
+
+        #logArea {
+            margin-top: 20px;
+            background: #282c34;
+            color: #abb2bf;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: monospace;
+            height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        .log-success { color: #98c379; }
+        .log-error { color: #e06c75; }
+        .log-info { color: #61afef; }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h2>📢 Voice Blaster / OTP Voice</h2>
+        <p>Kirim panggilan suara massal (Voice Blast) atau Voice OTP ke banyak nomor sekaligus secara otomatis.</p>
+
+        <div class="form-group">
+            <label>Token Device</label>
+            <input type="text" id="tokenInput" placeholder="Masukkan token device Anda" value="tokalink">
+        </div>
+
+        <div class="form-group">
+            <label>Nomor Tujuan (Pisahkan dengan koma atau baris baru)</label>
+            <textarea id="numbersInput" placeholder="62812xxx&#10;62813xxx&#10;62814xxx">628</textarea>
+        </div>
+
+        <div class="form-group">
+            <label>Pesan Suara (Text-to-Speech)</label>
+            <textarea id="messageInput" placeholder="Teks yang akan dibacakan ke penerima telepon...">Halo! Ini adalah panggilan otomatis dari sistem Voice Blaster. Terima kasih.</textarea>
+        </div>
+
+        <button id="btnBlast" onclick="startBlast()">🚀 Mulai Voice Blast</button>
+
+        <div id="logArea"></div>
+    </div>
+
+    <script>
+        function log(message, type = 'info') {
+            const logArea = document.getElementById("logArea");
+            const time = new Date().toLocaleTimeString();
+            let colorClass = '';
+            if (type === 'success') colorClass = 'log-success';
+            if (type === 'error') colorClass = 'log-error';
+            if (type === 'info') colorClass = 'log-info';
+            
+            logArea.innerHTML += `<span class="${colorClass}">[${time}] ${message}</span><br>`;
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        async function startBlast() {
+            const token = document.getElementById("tokenInput").value.trim();
+            const numbersRaw = document.getElementById("numbersInput").value.trim();
+            const message = document.getElementById("messageInput").value.trim();
+            const btn = document.getElementById("btnBlast");
+
+            if (!token || !numbersRaw || !message) {
+                alert("Harap isi Token, Nomor Tujuan, dan Pesan Suara!");
+                return;
+            }
+
+            // Pisahkan nomor berdasarkan koma atau baris baru
+            const numbers = numbersRaw.split(/[\n,]+/).map(n => n.trim()).filter(n => n.length > 5);
+
+            if (numbers.length === 0) {
+                alert("Tidak ada nomor tujuan yang valid.");
+                return;
+            }
+
+            btn.disabled = true;
+            log(`Memulai Voice Blast ke ${numbers.length} nomor...`, 'info');
+
+            // Generate TTS URL dari Google Translate
+            const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=id&q=${encodeURIComponent(message)}`;
+
+            for (let i = 0; i < numbers.length; i++) {
+                const targetNumber = numbers[i];
+                log(`Memanggil ${targetNumber} (${i + 1}/${numbers.length})...`, 'info');
+
+                try {
+                    const response = await fetch("http://localhost:7900/api/call", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "apikey": "your-api-key-here" // Sesuaikan jika ada API Key
+                        },
+                        body: JSON.stringify({
+                            token: token,
+                            to: targetNumber,
+                            call_audio_file: audioUrl
+                        })
+                    });
+
+                    const data = await response.json();
+                    if (response.ok) {
+                        log(`✅ Panggilan ke ${targetNumber} berhasil diluncurkan!`, 'success');
+                    } else {
+                        log(`❌ Gagal memanggil ${targetNumber}: ${data.error || 'Unknown Error'}`, 'error');
+                    }
+                } catch (e) {
+                    log(`❌ Error koneksi saat memanggil ${targetNumber}: ${e.message}`, 'error');
+                }
+
+                // Jeda antar panggilan agar tidak dianggap spam (misal: 5 detik)
+                if (i < numbers.length - 1) {
+                    log(`Menunggu 5 detik sebelum panggilan berikutnya...`, 'info');
+                    await new Promise(r => setTimeout(r, 5000));
+                }
+            }
+
+            log(`🎉 Voice Blast selesai!`, 'success');
+            btn.disabled = false;
+        }
+    </script>
+</body>
+
+</html>

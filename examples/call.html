@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Wa Caller Tester</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 40px;
+            background: #f4f7f6;
+            color: #333;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: auto;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        h2 {
+            margin-top: 0;
+            color: #007bff;
+            text-align: center;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 16px;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        #status {
+            margin-top: 20px;
+            font-weight: bold;
+            color: #555;
+            text-align: center;
+        }
+
+        .green {
+            color: #28a745 !important;
+        }
+
+        .red {
+            color: #dc3545 !important;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h2>WhatsApp Caller Tester 🎙️</h2>
+        <p style="text-align: center;">Pilih mode panggilan yang ingin Anda gunakan.</p>
+
+        <div class="form-group">
+            <label>Token Penelepon</label>
+            <input type="hidden" id="tokenInput" placeholder="Contoh: 111" value="111">
+        </div>
+
+        <div class="form-group">
+            <label>Nomor Target</label>
+            <input type="text" id="phoneInput" placeholder="Contoh: 628123456789">
+        </div>
+
+        <div class="form-group">
+            <label>API Key (Opsional)</label>
+            <input type="hidden" id="apiKeyInput" placeholder="your-api-key-here" value="your-api-key-here">
+        </div>
+
+        <div class="form-group">
+            <label>Mode Panggilan</label>
+            <select id="modeSelect" onchange="toggleMode()">
+                <option value="mic">Real-Time Mic (Streaming)</option>
+                <option value="audio">Putar URL Audio (MP3)</option>
+                <option value="tts">Text-to-Speech (Google TTS)</option>
+            </select>
+        </div>
+
+        <div id="audioOptions" class="form-group hidden">
+            <label>URL Audio (MP3)</label>
+            <input type="text" id="audioUrlInput" placeholder="https://domain.com/audio.mp3">
+        </div>
+
+        <div id="ttsOptions" class="form-group hidden">
+            <label>Teks yang akan diucapkan</label>
+            <textarea id="ttsTextInput" rows="3" placeholder="Halo, ini adalah pesan percobaan..."></textarea>
+        </div>
+
+        <button id="btnConnect" onclick="startCall()">Panggil Sekarang 📞</button>
+        <button id="btnEnd" onclick="endCall()" style="background: #dc3545; margin-top: 10px; display: none;">Tutup
+            Panggilan 🔴</button>
+        <div id="status">Status: Menunggu (Idle)</div>
+    </div>
+
+    <script>
+        let ws;
+        let audioContext;
+        let mediaStream;
+
+        function toggleMode() {
+            const mode = document.getElementById("modeSelect").value;
+            document.getElementById("audioOptions").classList.add("hidden");
+            document.getElementById("ttsOptions").classList.add("hidden");
+
+            if (mode === "audio") {
+                document.getElementById("audioOptions").classList.remove("hidden");
+            } else if (mode === "tts") {
+                document.getElementById("ttsOptions").classList.remove("hidden");
+            }
+        }
+
+        async function startCall() {
+            const token = document.getElementById("tokenInput").value.trim();
+            const phone = document.getElementById("phoneInput").value.trim();
+            const apiKey = document.getElementById("apiKeyInput").value.trim();
+            const mode = document.getElementById("modeSelect").value;
+
+            if (!token || !phone) {
+                alert("Harap masukkan Token dan Nomor WhatsApp Target!");
+                return;
+            }
+
+            let callAudioFile = "";
+
+            if (mode === "audio") {
+                callAudioFile = document.getElementById("audioUrlInput").value.trim();
+                if (!callAudioFile) return alert("Harap masukkan URL Audio!");
+            } else if (mode === "tts") {
+                const text = document.getElementById("ttsTextInput").value.trim();
+                if (!text) return alert("Harap masukkan Teks!");
+                callAudioFile = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=id&q=${encodeURIComponent(text)}`;
+            }
+
+            const statusEl = document.getElementById("status");
+            statusEl.innerHTML = "Status: Memulai panggilan...";
+            statusEl.className = "";
+
+            try {
+                // 1. Initiate Call via API
+                const response = await fetch("http://localhost:7900/api/call", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "apikey": apiKey
+                    },
+                    body: JSON.stringify({
+                        "token": token,
+                        "to": phone,
+                        "call_audio_file": callAudioFile,
+                        "interactive_webhook": "" // Kosongkan untuk tester ini
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok || !data.call_id) {
+                    statusEl.innerHTML = "Status: Gagal memulai panggilan (" + (data.error || "Unknown Error") + ")";
+                    statusEl.className = "red";
+                    return;
+                }
+
+                // --- TRACK CALL VIA WEBSOCKET ---
+                const callId = data.call_id;
+                console.log("Call initiated with ID:", callId);
+                statusEl.innerHTML = "Status: Memanggil... ⏳";
+
+                // Hubungkan ke WebSocket apiwago
+                ws = new WebSocket(`ws://localhost:7900/api/call/stream?call_id=${callId}&mode=${mode}`);
+                ws.binaryType = 'arraybuffer'; // Harus arraybuffer untuk PCM 16-bit
+
+                ws.onopen = async () => {
+                    document.getElementById("btnConnect").style.display = "none";
+                    document.getElementById("btnEnd").style.display = "block";
+
+                    if (mode === "mic") {
+                        statusEl.innerHTML = "Status: Menunggu Diangkat... (Mic Siap) 🟡";
+                        // Mulai merekam mikrofon
+                        await startMicrophoneStream();
+                    } else {
+                        statusEl.innerHTML = "Status: Menunggu Diangkat... 🟡";
+                    }
+                };
+
+                ws.onmessage = async (event) => {
+                    if (typeof event.data === "string") {
+                        // Menerima pesan Teks (JSON status)
+                        try {
+                            const payload = JSON.parse(event.data);
+                            if (payload.event === "answered") {
+                                if (mode === "mic") {
+                                    statusEl.innerHTML = "Status: Panggilan Dijawab! Silakan Bicara 🟢";
+                                } else {
+                                    statusEl.innerHTML = "Status: Panggilan Dijawab! Memutar Audio 🎵";
+                                }
+                                statusEl.className = "green";
+                            }
+                        } catch(e) {}
+                        return;
+                    }
+
+                    // Menerima suara penelepon (Binary ArrayBuffer)
+                    if (!audioContext) return;
+
+                    const pcm16 = new Int16Array(event.data);
+                    const float32 = new Float32Array(pcm16.length);
+                    for (let i = 0; i < pcm16.length; i++) {
+                        float32[i] = pcm16[i] / 32768.0;
+                    }
+
+                    const buffer = audioContext.createBuffer(1, float32.length, 16000);
+                    buffer.copyToChannel(float32, 0);
+
+                    const source = audioContext.createBufferSource();
+                    source.buffer = buffer;
+                    source.connect(audioContext.destination);
+
+                    if (window.nextPlayTime === undefined || window.nextPlayTime < audioContext.currentTime) {
+                        window.nextPlayTime = audioContext.currentTime;
+                    }
+                    source.start(window.nextPlayTime);
+                    window.nextPlayTime += buffer.duration;
+                };
+
+                ws.onerror = (error) => {
+                    statusEl.innerHTML = "Status: WebSocket Error";
+                    statusEl.className = "red";
+                    resetUI();
+                };
+
+                ws.onclose = () => {
+                    statusEl.innerHTML = "Status: Panggilan Berakhir / Terputus 🔴";
+                    statusEl.className = "red";
+                    if (mediaStream) {
+                        mediaStream.getTracks().forEach(track => track.stop());
+                    }
+                    resetUI();
+                };
+            } catch (err) {
+                statusEl.innerHTML = "Status: Terjadi kesalahan jaringan";
+                statusEl.className = "red";
+                alert("Error: " + err.message);
+                resetUI();
+            }
+        }
+
+        function endCall() {
+            if (ws) {
+                ws.close();
+            }
+        }
+
+        function resetUI() {
+            document.getElementById("btnConnect").style.display = "block";
+            document.getElementById("btnEnd").style.display = "none";
+        }
+
+        async function startMicrophoneStream() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioContext = new AudioContext({ sampleRate: 16000 }); // Wajib 16000 Hz
+
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                const processor = audioContext.createScriptProcessor(2048, 1, 1);
+
+                processor.onaudioprocess = (e) => {
+                    const inputData = e.inputBuffer.getChannelData(0); // Float32Array
+                    const pcm16 = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        let s = Math.max(-1, Math.min(1, inputData[i]));
+                        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    }
+
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(pcm16.buffer);
+                    }
+                };
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+            } catch (err) {
+                alert("Gagal mengakses mikrofon: " + err.message);
+            }
+        }
+    </script>
+</body>
+
+</html>
